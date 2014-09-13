@@ -29,6 +29,7 @@
 #include "sd-event.h"
 #include "fdset.h"
 #include "cgroup-util.h"
+#include "install.h"
 
 /* Enforce upper limit how many names we allow */
 #define MANAGER_MAX_NAMES 131072 /* 128K */
@@ -82,6 +83,7 @@ struct Manager {
         /* Active jobs and units */
         Hashmap *units;  /* name string => Unit object n:1 */
         Hashmap *jobs;   /* job id => Job object 1:1 */
+        EnabledContext *enabled; /* name string => is enabled */
 
         /* To make it easy to iterate through the units of a specific
          * type we maintain a per type linked list */
