@@ -29,7 +29,6 @@
 #include "sd-event.h"
 #include "fdset.h"
 #include "cgroup-util.h"
-#include "install.h"
 
 /* Enforce upper limit how many names we allow */
 #define MANAGER_MAX_NAMES 131072 /* 128K */
@@ -73,6 +72,7 @@ typedef enum ManagerExitCode {
 #include "unit-name.h"
 #include "exit-status.h"
 #include "show-status.h"
+#include "install.h"
 #include "failure-action.h"
 
 struct Manager {

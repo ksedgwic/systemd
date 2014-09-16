@@ -264,7 +264,7 @@ enum kdbus_item_type {
 	KDBUS_ITEM_ID,
 	KDBUS_ITEM_TIMESTAMP,
 	KDBUS_ITEM_CREDS,
-	KDBUS_ITEM_AUXGROUPS,
+        KDBUS_ITEM_AUXGROUPS,
 	KDBUS_ITEM_PID_COMM,
 	KDBUS_ITEM_TID_COMM,
 	KDBUS_ITEM_EXE,
@@ -515,19 +515,19 @@ enum kdbus_hello_flags {
  * @_KDBUS_ATTACH_ALL:		All of the above
  */
 enum kdbus_attach_flags {
-	KDBUS_ATTACH_TIMESTAMP		=  1 <<  0,
-	KDBUS_ATTACH_CREDS		=  1 <<  1,
-	KDBUS_ATTACH_AUXGROUPS		=  1 <<  2,
-	KDBUS_ATTACH_NAMES		=  1 <<  3,
-	KDBUS_ATTACH_COMM		=  1 <<  4,
-	KDBUS_ATTACH_EXE		=  1 <<  5,
-	KDBUS_ATTACH_CMDLINE		=  1 <<  6,
-	KDBUS_ATTACH_CGROUP		=  1 <<  7,
-	KDBUS_ATTACH_CAPS		=  1 <<  8,
-	KDBUS_ATTACH_SECLABEL		=  1 <<  9,
-	KDBUS_ATTACH_AUDIT		=  1 << 10,
-	KDBUS_ATTACH_CONN_NAME		=  1 << 11,
-	_KDBUS_ATTACH_ALL		=  (1 << 12) - 1,
+        KDBUS_ATTACH_TIMESTAMP          =  1 <<  0,
+        KDBUS_ATTACH_CREDS              =  1 <<  1,
+        KDBUS_ATTACH_AUXGROUPS          =  1 <<  2,
+        KDBUS_ATTACH_NAMES              =  1 <<  3,
+        KDBUS_ATTACH_COMM               =  1 <<  4,
+        KDBUS_ATTACH_EXE                =  1 <<  5,
+        KDBUS_ATTACH_CMDLINE            =  1 <<  6,
+        KDBUS_ATTACH_CGROUP             =  1 <<  7,
+        KDBUS_ATTACH_CAPS               =  1 <<  8,
+        KDBUS_ATTACH_SECLABEL           =  1 <<  9,
+        KDBUS_ATTACH_AUDIT              =  1 << 10,
+        KDBUS_ATTACH_CONN_NAME          =  1 << 11,
+        _KDBUS_ATTACH_ALL               =  (1 << 12) - 1,
 };
 
 /**
