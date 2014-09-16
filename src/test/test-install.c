@@ -46,8 +46,8 @@ int main(int argc, char* argv[]) {
         UnitFileList *p;
         Iterator i;
         int r;
-        const char *const files[] = { "avahi-daemon.service", NULL };
-        const char *const files2[] = { "/home/lennart/test.service", NULL };
+        const char *const files[] = { "hello.service", NULL };
+        const char *const files2[] = { "/home/ksedgwic/test.service", NULL };
         UnitFileChange *changes = NULL;
         unsigned n_changes = 0;
 
