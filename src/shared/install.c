@@ -421,6 +421,119 @@ void enabled_context_free(EnabledContext *ec) {
         free(ec);
 }
 
+static int fill_enabled_context(
+                int fd,
+                const char *path,
+                EnabledContext *ec) {
+        int r = 0;
+        _cleanup_closedir_ DIR *d = NULL;
+        Hashmap *config_path_forward;
+        Hashmap *config_path_reverse;
+
+        config_path_forward = hashmap_get(ec->config_paths_forward, path);
+        config_path_reverse = hashmap_get(ec->config_paths_reverse, path);
+
+        /* Initialize empty forward and reverse lookups for the
+         * enabled context cache */
+        r = hashmap_ensure_allocated(&config_path_forward, string_hash_func, string_compare_func);
+        if (r < 0) {
+                return r;
+        }
+        r = hashmap_put(ec->config_paths_forward, path, config_path_forward);
+        if (r < 0)
+                return r;
+        r = hashmap_ensure_allocated(&config_path_reverse, string_hash_func, string_compare_func);
+        if (r < 0) {
+                return r;
+        }
+        r = hashmap_put(ec->config_paths_reverse, path, config_path_reverse);
+        if (r < 0)
+                return r;
+
+        d = fdopendir(fd);
+        if (!d) {
+                safe_close(fd);
+                return -errno;
+        }
+
+        for (;;) {
+                struct dirent *de;
+
+                errno = 0;
+                de = readdir(d);
+                if (!de && errno != 0)
+                        return -errno;
+
+                if (!de)
+                        break;
+
+                if (ignore_file(de->d_name))
+                        continue;
+
+                dirent_ensure_type(d, de);
+
+                if (de->d_type == DT_DIR) {
+                        int nfd, q;
+                        _cleanup_free_ char *p = NULL;
+
+                        nfd = openat(fd, de->d_name, O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+                        if (nfd < 0) {
+                                if (errno == ENOENT)
+                                        continue;
+
+                                if (r == 0)
+                                        r = -errno;
+                                continue;
+                        }
+
+                        p = path_make_absolute(de->d_name, path);
+                        if (!p) {
+                                safe_close(nfd);
+                                return -ENOMEM;
+                        }
+
+                        /* This will close nfd, regardless whether it succeeds or not */
+                        q = fill_enabled_context(nfd, p, ec);
+                        if (r == 0)
+                                r = q;
+
+                } else if (de->d_type == DT_LNK) {
+                        _cleanup_free_ char *p = NULL, *dest = NULL;
+                        int q;
+
+                        /* Acquire symlink name */
+                        p = path_make_absolute(de->d_name, path);
+                        if (!p)
+                                return -ENOMEM;
+
+                        /* Acquire symlink destination */
+                        q = readlink_and_canonicalize(p, &dest);
+                        if (q < 0) {
+                                if (q == -ENOENT)
+                                        continue;
+
+                                if (r == 0)
+                                        r = q;
+                                continue;
+                        }
+
+                        /* Insert symlink's own full path and
+                         * name as keys pointing to the unit's
+                         * full path */
+                        hashmap_put(config_path_forward, p, dest);
+                        hashmap_put(config_path_forward, de->d_name, dest);
+
+                        /* Insert full path and base of the
+                         * symlink target as keys pointing to
+                         * the symlink's own full path */
+                        hashmap_put(config_path_reverse, dest, p);
+                        hashmap_put(config_path_reverse, basename(dest), p);
+                }
+        }
+
+        return 0;
+}
+
 static int find_symlinks_fd(
                 const char *name,
                 int fd,
@@ -430,12 +543,12 @@ static int find_symlinks_fd(
                 EnabledContext *ec) {
 
         int r = 0;
-        _cleanup_closedir_ DIR *d = NULL;
         _cleanup_enabled_context_ EnabledContext *temp_ec = NULL;
         char *symlink_path;
         char *symlink_target_path;
         Hashmap *config_path_forward;
         Hashmap *config_path_reverse;
+        bool found_path, found_dest, b = false;
 
         assert(name);
         assert(fd >= 0);
@@ -452,111 +565,17 @@ static int find_symlinks_fd(
         }
 
         config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
-        config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
 
         /* If config_path_forward isn't cached, generate both directions */
         if (config_path_forward == NULL) {
-                /* Initialize empty forward and reverse lookups for the
-                 * enabled context cache */
-                r = hashmap_ensure_allocated(&config_path_forward, string_hash_func, string_compare_func);
-                if (r < 0) {
-                        return r;
-                }
-                r = hashmap_put(ec->config_paths_forward, config_path, config_path_forward);
+                r = fill_enabled_context(fd, config_path, ec);
                 if (r < 0)
                         return r;
-                r = hashmap_ensure_allocated(&config_path_reverse, string_hash_func, string_compare_func);
-                if (r < 0) {
-                        return r;
-                }
-                r = hashmap_put(ec->config_paths_reverse, config_path, config_path_reverse);
-                if (r < 0)
-                        return r;
-
-                d = fdopendir(fd);
-                if (!d) {
-                        safe_close(fd);
-                        return -errno;
-                }
-
-                for (;;) {
-                        struct dirent *de;
-
-                        errno = 0;
-                        de = readdir(d);
-                        if (!de && errno != 0)
-                                return -errno;
-
-                        if (!de)
-                                break;
-
-                        if (ignore_file(de->d_name))
-                                continue;
-
-                        dirent_ensure_type(d, de);
-
-                        if (de->d_type == DT_DIR) {
-                                int nfd, q;
-                                _cleanup_free_ char *p = NULL;
-
-                                nfd = openat(fd, de->d_name, O_RDONLY|O_NONBLOCK|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-                                if (nfd < 0) {
-                                        if (errno == ENOENT)
-                                                continue;
-
-                                        if (r == 0)
-                                                r = -errno;
-                                        continue;
-                                }
-
-                                p = path_make_absolute(de->d_name, path);
-                                if (!p) {
-                                        safe_close(nfd);
-                                        return -ENOMEM;
-                                }
-
-                                /* This will close nfd, regardless whether it succeeds or not */
-                                q = find_symlinks_fd(name, nfd, p, config_path, same_name_link, ec);
-                                if (q > 0)
-                                        return 1; TKTK
-                                if (r == 0)
-                                        r = q;
-
-                        } else if (de->d_type == DT_LNK) {
-                                _cleanup_free_ char *p = NULL, *dest = NULL;
-                                bool found_path, found_dest, b = false;
-                                int q;
-
-                                /* Acquire symlink name */
-                                p = path_make_absolute(de->d_name, path);
-                                if (!p)
-                                        return -ENOMEM;
-
-                                /* Acquire symlink destination */
-                                q = readlink_and_canonicalize(p, &dest);
-                                if (q < 0) {
-                                        if (q == -ENOENT)
-                                                continue;
-
-                                        if (r == 0)
-                                                r = q;
-                                        continue;
-                                }
-
-                                /* Insert symlink's own full path and
-                                 * name as keys pointing to the unit's
-                                 * full path */
-                                hashmap_put(config_path_forward, p, dest);
-                                hashmap_put(config_path_forward, de->d_name, dest);
-
-                                /* Insert full path and base of the
-                                 * symlink target as keys pointing to
-                                 * the symlink's own full path */
-                                hashmap_put(config_path_reverse, dest, p);
-                                hashmap_put(config_path_reverse, basename(dest), p);
-                        }
-                }
         }
+
+        /* Refetch, may have been filled. */
+        config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
+        config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
 
         /* Use the cache to perform a reverse lookup of symlink
          * destinations to see if any one matches what we are looking
@@ -594,7 +613,7 @@ static int find_symlinks_fd(
         else if (found_path || found_dest)
                 return 1;
 
-
+        return 0;
 }
 
 static int find_symlinks(

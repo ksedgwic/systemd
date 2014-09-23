@@ -41,7 +41,7 @@ static void dump_changes(UnitFileChange *c, unsigned n) {
         }
 }
 
-static void test_install(EnabledContext *ec) {
+static void test_install(int argc, char* argv[], EnabledContext *ec) {
         Hashmap *h;
         UnitFileList *p;
         Iterator i;
@@ -266,11 +266,11 @@ static void test_install(EnabledContext *ec) {
 int main(int argc, char* argv[]) {
         EnabledContext *ec;
 
-        test_install(NULL);
+        test_install(argc, argv, NULL);
 
         ec = enabled_context_new();
         assert(ec);
-        test_install(ec);
+        test_install(argc, argv, ec);
 
         return 0;
 }
