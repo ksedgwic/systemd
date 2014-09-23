@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
         int r;
         const char *root_dir = argv[1] ?: NULL;
         const char *const files[] = { "systemd-timesyncd.service", NULL };
-        const char *const files2[] = { "/home/ksedgwic/test.service", NULL };
+        const char *const files2[] = { "/home/lennart/test.service", NULL };
         UnitFileChange *changes = NULL;
         unsigned n_changes = 0;
 
