@@ -403,17 +403,18 @@ EnabledContext *enabled_context_new(void) {
 }
 
 void enabled_context_free(EnabledContext *ec) {
-        Hashmap **config_path;
-        Iterator i;
+        char *key;
 
-        HASHMAP_FOREACH(config_path, ec->config_paths_forward, i) {
-            hashmap_free(*config_path);
+        while ((key = hashmap_first_key(ec->config_paths_forward))) {
+                hashmap_free_free_free(hashmap_steal_first(ec->config_paths_forward));
+                free(key);
         }
         hashmap_free_free_free(ec->config_paths_forward);
         ec->config_paths_forward = NULL;
 
-        HASHMAP_FOREACH(config_path, ec->config_paths_reverse, i) {
-            hashmap_free(*config_path);
+        while ((key = hashmap_first_key(ec->config_paths_reverse))) {
+                hashmap_free_free_free(hashmap_steal_first(ec->config_paths_reverse));
+                free(key);
         }
         hashmap_free_free_free(ec->config_paths_reverse);
         ec->config_paths_reverse = NULL;
@@ -424,31 +425,35 @@ void enabled_context_free(EnabledContext *ec) {
 static int fill_enabled_context(
                 int fd,
                 const char *path,
+                const char *config_path,
                 EnabledContext *ec) {
         int r = 0;
         _cleanup_closedir_ DIR *d = NULL;
         Hashmap *config_path_forward;
         Hashmap *config_path_reverse;
 
-        config_path_forward = hashmap_get(ec->config_paths_forward, path);
-        config_path_reverse = hashmap_get(ec->config_paths_reverse, path);
+        config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
+        config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
 
-        /* Initialize empty forward and reverse lookups for the
-         * enabled context cache */
-        r = hashmap_ensure_allocated(&config_path_forward, string_hash_func, string_compare_func);
-        if (r < 0) {
-                return r;
+        /* If config_path_forward isn't cached, generate both directions */
+        if (config_path_forward == NULL) {
+                /* Initialize empty forward and reverse lookups for the
+                 * enabled context cache */
+                r = hashmap_ensure_allocated(&config_path_forward, string_hash_func, string_compare_func);
+                if (r < 0) {
+                        return r;
+                }
+                r = hashmap_put(ec->config_paths_forward, strdup(config_path), config_path_forward);
+                if (r < 0)
+                        return r;
+                r = hashmap_ensure_allocated(&config_path_reverse, string_hash_func, string_compare_func);
+                if (r < 0) {
+                        return r;
+                }
+                r = hashmap_put(ec->config_paths_reverse, strdup(config_path), config_path_reverse);
+                if (r < 0)
+                        return r;
         }
-        r = hashmap_put(ec->config_paths_forward, path, config_path_forward);
-        if (r < 0)
-                return r;
-        r = hashmap_ensure_allocated(&config_path_reverse, string_hash_func, string_compare_func);
-        if (r < 0) {
-                return r;
-        }
-        r = hashmap_put(ec->config_paths_reverse, path, config_path_reverse);
-        if (r < 0)
-                return r;
 
         d = fdopendir(fd);
         if (!d) {
@@ -493,7 +498,7 @@ static int fill_enabled_context(
                         }
 
                         /* This will close nfd, regardless whether it succeeds or not */
-                        q = fill_enabled_context(nfd, p, ec);
+                        q = fill_enabled_context(nfd, p, config_path, ec);
                         if (r == 0)
                                 r = q;
 
@@ -520,18 +525,18 @@ static int fill_enabled_context(
                         /* Insert symlink's own full path and
                          * name as keys pointing to the unit's
                          * full path */
-                        hashmap_put(config_path_forward, p, dest);
-                        hashmap_put(config_path_forward, de->d_name, dest);
+                        hashmap_put(config_path_forward, strdup(p), strdup(dest));
+                        hashmap_put(config_path_forward, strdup(de->d_name), strdup(dest));
 
                         /* Insert full path and base of the
                          * symlink target as keys pointing to
                          * the symlink's own full path */
-                        hashmap_put(config_path_reverse, dest, p);
-                        hashmap_put(config_path_reverse, basename(dest), p);
+                        hashmap_put(config_path_reverse, strdup(dest), strdup(p));
+                        hashmap_put(config_path_reverse, strdup(basename(dest)), strdup(p));
                 }
         }
 
-        return 0;
+        return r;
 }
 
 static int find_symlinks_fd(
@@ -568,7 +573,7 @@ static int find_symlinks_fd(
 
         /* If config_path_forward isn't cached, generate both directions */
         if (config_path_forward == NULL) {
-                r = fill_enabled_context(fd, config_path, ec);
+                r = fill_enabled_context(fd, path, config_path, ec);
                 if (r < 0)
                         return r;
         }
@@ -2268,6 +2273,9 @@ int unit_file_get_list(
                 }
         }
 
+        /* The 1 that hashmap_put in the "found" section returns on
+         * successful put can get here.  No valid error r value can
+         * get here. */
         return 0;
 }
 
