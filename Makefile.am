@@ -1339,7 +1339,8 @@ tests += \
 	test-async \
 	test-ratelimit \
 	test-condition-util \
-	test-uid-range
+	test-uid-range \
+	test-enabled
 
 EXTRA_DIST += \
 	test/a.service \
@@ -1747,6 +1748,15 @@ test_install_SOURCES = \
 	src/test/test-install.c
 
 test_install_LDADD = \
+	libsystemd-units.la \
+	libsystemd-label.la \
+	libsystemd-shared.la \
+	libsystemd-internal.la
+
+test_enabled_SOURCES = \
+	src/test/test-enabled.c
+
+test_enabled_LDADD = \
 	libsystemd-units.la \
 	libsystemd-label.la \
 	libsystemd-shared.la \
