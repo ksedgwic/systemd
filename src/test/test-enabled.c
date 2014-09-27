@@ -29,15 +29,43 @@
 #include "unit-name.h"
 #include "install.h"
 
+const char *subdir = "/test-enabled-root";
+char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
+
+static void confirm_state(const char *unit, UnitFileState expected_state) {
+        UnitFileState actual_state;
+
+        actual_state = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit);
+
+        assert_se(actual_state == expected_state);
+}
+
+static void confirm_error(const char *unit, int expected_errno) {
+        int actual_return;
+
+        actual_return = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit);
+
+        assert_se(actual_return == -expected_errno);
+}
+
 static void test_enabled(int argc, char* argv[]) {
 
-    const char *subdir = "/test-enabled-root";
-    char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
+        strncat(root_dir, subdir, strlen(subdir));
 
-    strncat(root_dir, subdir, strlen(subdir));
+        confirm_error("disabled.service", ENOENT);
+        confirm_state("another.service", UNIT_FILE_ENABLED);
+        confirm_state("aliased.service", UNIT_FILE_ENABLED);
+        confirm_state("different.service", UNIT_FILE_ENABLED);
+        confirm_state("unique.service", UNIT_FILE_ENABLED);
+        confirm_state("masked.service", UNIT_FILE_DISABLED);
+        confirm_state("also_masked.service", UNIT_FILE_DISABLED);
+        confirm_state("masked.service", UNIT_FILE_DISABLED);
 
-    assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, "another.service") == UNIT_FILE_ENABLED);
-
+        confirm_state("templatating@.service", UNIT_FILE_ENABLED);
+        confirm_state("templatating@one.service", UNIT_FILE_ENABLED);
+        confirm_state("templatating@two.service", UNIT_FILE_ENABLED);
+        confirm_state("templatating@three.service", UNIT_FILE_ENABLED);
+        confirm_state("templatating@four.service", UNIT_FILE_DISABLED);
 }
 
 int main(int argc, char* argv[]) {
