@@ -75,7 +75,6 @@
 */
 
 
-const char *subdir = "/test-enabled-root";
 char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
 
 #define confirm_unit_state(unit, expected)                              \
@@ -87,8 +86,7 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         Iterator i;
         int r;
 
-        strncat(root_dir, subdir, strlen(subdir));
-
+        /* Explicitly check each of the units. */
         confirm_unit_state("nonexistent.service",	-ENOENT);
         confirm_unit_state("invalid.service", 		-EBADMSG);
         confirm_unit_state("disabled.service", 		UNIT_FILE_DISABLED);
@@ -104,10 +102,10 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         confirm_unit_state("templating@three.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("unique.service", 		UNIT_FILE_ENABLED);
 
+        /* Reconcile unit_file_get_list with the return for each unit. */
         h = hashmap_new(string_hash_func, string_compare_func);
         r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h, ec);
         assert_se(r == 0);
-
         HASHMAP_FOREACH(p, h, i) {
                 UnitFileState s;
 
@@ -137,8 +135,12 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         unit_file_list_free(h);
 }
 
+const char *subdir = "/test-enabled-root";
+
 int main(int argc, char* argv[]) {
         EnabledContext *ec;
+
+        strncat(root_dir, subdir, strlen(subdir));
 
         /* built-in EnabledContext */
         test_enabled(argc, argv, NULL);
