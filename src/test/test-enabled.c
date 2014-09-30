@@ -40,10 +40,15 @@ static void test_enabled(int argc, char* argv[]) {
         strncat(root_dir, subdir, strlen(subdir));
 
         confirm_unit_state("nonexistent.service",	-ENOENT);
+        confirm_unit_state("invalid.service", 		-EBADMSG);
         confirm_unit_state("disabled.service", 		UNIT_FILE_DISABLED);
         confirm_unit_state("another.service", 		UNIT_FILE_ENABLED);
+        confirm_unit_state("runtime.service", 		UNIT_FILE_ENABLED_RUNTIME);
         confirm_unit_state("masked.service", 		UNIT_FILE_MASKED);
         confirm_unit_state("maskedruntime.service",	UNIT_FILE_MASKED_RUNTIME);
+        confirm_unit_state("static.service", 		UNIT_FILE_STATIC);
+        confirm_unit_state("maskedstatic.service",	UNIT_FILE_MASKED);
+        confirm_unit_state("maskedruntimestatic.service", UNIT_FILE_MASKED_RUNTIME);
         confirm_unit_state("templating@.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("templating@two.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("templating@three.service",	UNIT_FILE_ENABLED);
