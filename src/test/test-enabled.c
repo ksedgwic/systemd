@@ -79,9 +79,9 @@ const char *subdir = "/test-enabled-root";
 char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
 
 #define confirm_unit_state(unit, expected)                              \
-        assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit) == expected)
+        assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit, ec) == expected)
 
-static void test_enabled(int argc, char* argv[]) {
+static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         Hashmap *h;
         UnitFileList *p;
         Iterator i;
@@ -105,14 +105,14 @@ static void test_enabled(int argc, char* argv[]) {
         confirm_unit_state("unique.service", 		UNIT_FILE_ENABLED);
 
         h = hashmap_new(string_hash_func, string_compare_func);
-        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
+        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h, ec);
         assert_se(r == 0);
 
         HASHMAP_FOREACH(p, h, i) {
                 UnitFileState s;
 
                 s = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir,
-                                        basename(p->path));
+                                        basename(p->path), ec);
 
                 /* unit_file_get_list and unit_file_get_state are
                  * a little different in some cases.  Handle these
@@ -138,6 +138,15 @@ static void test_enabled(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-        test_enabled(argc, argv);
+        EnabledContext *ec;
+
+        /* built-in EnabledContext */
+        test_enabled(argc, argv, NULL);
+
+        /* explicit EnabledContext */
+        ec = enabled_context_new();
+        assert(ec);
+        test_enabled(argc, argv, ec);
+
         return 0;
 }
