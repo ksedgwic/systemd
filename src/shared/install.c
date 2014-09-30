@@ -2146,7 +2146,10 @@ int unit_file_get_list(
                 }
         }
 
-        return r;
+        /* The 1 that hashmap_put in the "found" section returns on
+         * successful put can get here.  No valid error r value can
+         * get here. */
+        return 0;
 }
 
 static const char* const unit_file_state_table[_UNIT_FILE_STATE_MAX] = {

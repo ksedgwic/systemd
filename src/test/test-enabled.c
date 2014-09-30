@@ -29,6 +29,52 @@
 #include "unit-name.h"
 #include "install.h"
 
+/*
+.
+├── etc
+│   └── systemd
+│       └── system
+│           ├── masked.service -> /dev/null
+│           ├── maskedstatic.service -> /dev/null
+│           ├── some.target
+│           └── some.target.wants
+│               ├── another.service -> ../../../../usr/lib/systemd/system/another.service
+│               ├── aliased.service -> ../../../../usr/lib/systemd/system/another.service
+│               ├── different.service -> ../../../../usr/lib/systemd/system/unique.service
+│               ├── masked.service -> ../../../../usr/lib/systemd/system/masked.service
+│               ├── also_masked.service -> ../../../../usr/lib/systemd/system/masked.service
+│               ├── templating@one.service -> ../../../../usr/lib/systemd/system/templating@.service
+│               ├── templating@two.service -> ../../../../usr/lib/systemd/system/templating@two.service
+│               ├── templating@three.service -> ../../../../usr/lib/systemd/system/templating@.service
+│               └── templating@four.service -> ../../../../usr/lib/systemd/system/templating@four.service
+├── run
+│   └── systemd
+│       └── system
+│           ├── maskedruntime.service -> /dev/null
+│           ├── maskedruntimestatic.service -> /dev/null
+│           ├── other.target
+│           └── other.target.wants
+│               └── runtime.service -> ../../../../usr/lib/systemd/system/runtime.service
+└── usr
+    └── lib
+        └── systemd
+            └── system
+                ├── invalid.service
+                ├── disabled.service
+                ├── another.service
+                ├── runtime.service
+                ├── masked.service
+                ├── maskedruntime.service
+                ├── static.service
+                ├── maskedstatic.service
+                ├── maskedruntimestatic.service
+                ├── templating@.service
+                ├── templating@two.service
+                ├── templating@three.service
+                └── unique.service
+*/
+
+
 const char *subdir = "/test-enabled-root";
 char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
 
@@ -36,6 +82,10 @@ char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
         assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit) == expected)
 
 static void test_enabled(int argc, char* argv[]) {
+        Hashmap *h;
+        UnitFileList *p;
+        Iterator i;
+        int r;
 
         strncat(root_dir, subdir, strlen(subdir));
 
@@ -53,6 +103,38 @@ static void test_enabled(int argc, char* argv[]) {
         confirm_unit_state("templating@two.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("templating@three.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("unique.service", 		UNIT_FILE_ENABLED);
+
+        h = hashmap_new(string_hash_func, string_compare_func);
+        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
+        assert_se(r == 0);
+
+        HASHMAP_FOREACH(p, h, i) {
+                UnitFileState s;
+
+                s = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir,
+                                        basename(p->path));
+
+                /* unit_file_get_list and unit_file_get_state are
+                 * a little different in some cases.  Handle these
+                 * cases here ...
+                 */
+                switch ((int)s) {
+                case UNIT_FILE_ENABLED_RUNTIME:
+                        assert_se(p->state == UNIT_FILE_ENABLED);
+                        break;
+                case -EBADMSG:
+                        assert_se(p->state == UNIT_FILE_INVALID);
+                        break;
+                default:
+                        assert_se(p->state == s);
+                        break;
+                }
+
+                fprintf(stderr, "%s (%s)\n",
+                        p->path,
+                        unit_file_state_to_string(p->state));
+        }
+        unit_file_list_free(h);
 }
 
 int main(int argc, char* argv[]) {
