@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
         strncat(root_dir, subdir, strlen(subdir));
 
         /* built-in EnabledContext */
-        test_enabled(argc, argv, NULL);
+        // test_enabled(argc, argv, NULL);
 
         /* explicit EnabledContext */
         ec = enabled_context_new();
