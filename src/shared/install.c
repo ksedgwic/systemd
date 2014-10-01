@@ -548,6 +548,7 @@ static int find_symlinks_fd(
                 EnabledContext *ec) {
 
         int r = 0;
+        _cleanup_closedir_ DIR *d = NULL;
         _cleanup_enabled_context_ EnabledContext *temp_ec = NULL;
         char *symlink_path;
         char *symlink_target_path;
@@ -560,6 +561,12 @@ static int find_symlinks_fd(
         assert(path);
         assert(config_path);
         assert(same_name_link);
+
+        d = fdopendir(fd);
+        if (!d) {
+                safe_close(fd);
+                return -errno;
+        }
 
         /* If no ec is passed in, use a temporary one that auto-frees */
         if (ec == NULL) {
