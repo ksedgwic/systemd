@@ -562,12 +562,6 @@ static int find_symlinks_fd(
         assert(config_path);
         assert(same_name_link);
 
-        d = fdopendir(fd);
-        if (!d) {
-                safe_close(fd);
-                return -errno;
-        }
-
         /* If no ec is passed in, use a temporary one that auto-frees */
         if (ec == NULL) {
                 ec = enabled_context_new();
@@ -583,6 +577,8 @@ static int find_symlinks_fd(
                 r = fill_enabled_context(fd, path, config_path, ec);
                 if (r < 0)
                         return r;
+        } else {
+                safe_close(fd);
         }
 
         /* Refetch, may have been filled. */
