@@ -138,7 +138,7 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
 const char *subdir = "/test-enabled-root";
 
 int main(int argc, char* argv[]) {
-        EnabledContext *ec;
+        _cleanup_enabled_context_ EnabledContext *ec = NULL;
 
         strncat(root_dir, subdir, strlen(subdir));
 

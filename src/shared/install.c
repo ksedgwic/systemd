@@ -404,22 +404,47 @@ EnabledContext *enabled_context_new(void) {
 
 void enabled_context_free(EnabledContext *ec) {
         char *key;
+        Hashmap *h;
 
         while ((key = hashmap_first_key(ec->config_paths_forward))) {
-                hashmap_free_free_free(hashmap_steal_first(ec->config_paths_forward));
+                h = hashmap_steal_first(ec->config_paths_forward);
+                hashmap_free_free_free(h);
                 free(key);
         }
         hashmap_free_free_free(ec->config_paths_forward);
         ec->config_paths_forward = NULL;
 
         while ((key = hashmap_first_key(ec->config_paths_reverse))) {
-                hashmap_free_free_free(hashmap_steal_first(ec->config_paths_reverse));
+                h = hashmap_steal_first(ec->config_paths_reverse);
+                hashmap_free_free_free(h);
                 free(key);
         }
         hashmap_free_free_free(ec->config_paths_reverse);
         ec->config_paths_reverse = NULL;
 
         free(ec);
+}
+
+static int insert_link_mapping(Hashmap *h, const char * key, const char *val) {
+        int r = 0;
+        char *keycpy, *valcpy;
+
+        /* Make copies of the key and value */
+        keycpy = strdup(key);
+        valcpy = strdup(val);
+
+        r = hashmap_put(h, keycpy, valcpy);
+        if (r == 1) {
+                /* Our copies were inserted, we're done */
+                return 0;
+        } else {
+                /* Either an error or the mapping already existed, either way
+                 * we don't want the key and value copies any more ...
+                 */
+                free(keycpy);
+                free(valcpy);
+                return r;
+        }
 }
 
 static int fill_enabled_context(
@@ -525,14 +550,22 @@ static int fill_enabled_context(
                         /* Insert symlink's own full path and
                          * name as keys pointing to the unit's
                          * full path */
-                        hashmap_put(config_path_forward, strdup(p), strdup(dest));
-                        hashmap_put(config_path_forward, strdup(de->d_name), strdup(dest));
+                        q = insert_link_mapping(config_path_forward, p, dest);
+                        if (r == 0)
+                                r = q;
+                        q = insert_link_mapping(config_path_forward, de->d_name, dest);
+                        if (r == 0)
+                                r = q;
 
                         /* Insert full path and base of the
                          * symlink target as keys pointing to
                          * the symlink's own full path */
-                        hashmap_put(config_path_reverse, strdup(dest), strdup(p));
-                        hashmap_put(config_path_reverse, strdup(basename(dest)), strdup(p));
+                        q = insert_link_mapping(config_path_reverse, dest, p);
+                        if (r == 0)
+                                r = q;
+                        q = insert_link_mapping(config_path_reverse, basename(dest), p);
+                        if (r == 0)
+                                r = q;
                 }
         }
 
