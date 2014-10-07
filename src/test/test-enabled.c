@@ -75,8 +75,6 @@
 */
 
 
-char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
-
 #define confirm_unit_state(unit, expected)                              \
         assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit, ec) == expected)
 
@@ -85,6 +83,9 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         UnitFileList *p;
         Iterator i;
         int r;
+        const char *root_dir;
+
+        root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
         /* Explicitly check each of the units. */
         confirm_unit_state("nonexistent.service",	-ENOENT);
@@ -135,15 +136,11 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         unit_file_list_free(h);
 }
 
-const char *subdir = "/test-enabled-root";
-
 int main(int argc, char* argv[]) {
         _cleanup_enabled_context_ EnabledContext *ec = NULL;
 
-        strncat(root_dir, subdir, strlen(subdir));
-
         /* built-in EnabledContext */
-        // test_enabled(argc, argv, NULL);
+        test_enabled(argc, argv, NULL);
 
         /* explicit EnabledContext */
         ec = enabled_context_new();
