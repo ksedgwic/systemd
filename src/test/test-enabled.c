@@ -75,9 +75,6 @@
 */
 
 
-const char *subdir = "/test-enabled-root";
-char root_dir[UNIT_NAME_MAX + 2 + 1] = TEST_DIR;
-
 #define confirm_unit_state(unit, expected)                              \
         assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit) == expected)
 
@@ -86,8 +83,9 @@ static void test_enabled(int argc, char* argv[]) {
         UnitFileList *p;
         Iterator i;
         int r;
+        const char *root_dir;
 
-        strncat(root_dir, subdir, strlen(subdir));
+        root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
         confirm_unit_state("nonexistent.service",	-ENOENT);
         confirm_unit_state("invalid.service", 		-EBADMSG);
