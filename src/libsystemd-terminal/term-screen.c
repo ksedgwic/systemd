@@ -70,18 +70,14 @@ int term_screen_new(term_screen **out, term_screen_write_fn write_fn, void *writ
         screen->cmd_fn_data = cmd_fn_data;
         screen->flags = TERM_FLAG_7BIT_MODE;
         screen->conformance_level = TERM_CONFORMANCE_LEVEL_VT400;
-        screen->gl = &screen->g0;
-        screen->gr = &screen->g1;
         screen->g0 = &term_unicode_lower;
         screen->g1 = &term_unicode_upper;
         screen->g2 = &term_unicode_lower;
         screen->g3 = &term_unicode_upper;
-
-        screen->saved.cursor_x = 0;
-        screen->saved.cursor_y = 0;
-        screen->saved.attr = screen->attr;
-        screen->saved.gl = screen->gl;
-        screen->saved.gr = screen->gr;
+        screen->state.gl = &screen->g0;
+        screen->state.gr = &screen->g1;
+        screen->saved = screen->state;
+        screen->saved_alt = screen->saved;
 
         r = term_page_new(&screen->page_main);
         if (r < 0)
@@ -224,7 +220,7 @@ static bool screen_tab_is_set(term_screen *screen, unsigned int pos) {
 static inline void screen_age_cursor(term_screen *screen) {
         term_cell *cell;
 
-        cell = term_page_get_cell(screen->page, screen->cursor_x, screen->cursor_y);
+        cell = term_page_get_cell(screen->page, screen->state.cursor_x, screen->state.cursor_y);
         if (cell)
                 cell->age = screen->age;
 }
@@ -237,21 +233,21 @@ static void screen_cursor_set(term_screen *screen, unsigned int x, unsigned int 
         x = screen_clamp_x(screen, x);
         y = screen_clamp_y(screen, y);
 
-        if (x == screen->cursor_x && y == screen->cursor_y)
+        if (x == screen->state.cursor_x && y == screen->state.cursor_y)
                 return;
 
         if (!(screen->flags & TERM_FLAG_HIDE_CURSOR))
                 screen_age_cursor(screen);
 
-        screen->cursor_x = x;
-        screen->cursor_y = y;
+        screen->state.cursor_x = x;
+        screen->state.cursor_y = y;
 
         if (!(screen->flags & TERM_FLAG_HIDE_CURSOR))
                 screen_age_cursor(screen);
 }
 
 static void screen_cursor_set_rel(term_screen *screen, unsigned int x, unsigned int y) {
-        if (screen->flags & TERM_FLAG_ORIGIN_MODE) {
+        if (screen->state.origin_mode) {
                 x = screen_clamp_x(screen, x);
                 y = screen_clamp_x(screen, y) + screen->page->scroll_idx;
 
@@ -266,53 +262,53 @@ static void screen_cursor_set_rel(term_screen *screen, unsigned int x, unsigned 
 }
 
 static void screen_cursor_left(term_screen *screen, unsigned int num) {
-        if (num > screen->cursor_x)
-                num = screen->cursor_x;
+        if (num > screen->state.cursor_x)
+                num = screen->state.cursor_x;
 
-        screen_cursor_set(screen, screen->cursor_x - num, screen->cursor_y);
+        screen_cursor_set(screen, screen->state.cursor_x - num, screen->state.cursor_y);
 }
 
 static void screen_cursor_left_tab(term_screen *screen, unsigned int num) {
         unsigned int i;
 
-        i = screen->cursor_x;
+        i = screen->state.cursor_x;
         while (i > 0 && num > 0) {
                 if (screen_tab_is_set(screen, --i))
                         --num;
         }
 
-        screen_cursor_set(screen, i, screen->cursor_y);
+        screen_cursor_set(screen, i, screen->state.cursor_y);
 }
 
 static void screen_cursor_right(term_screen *screen, unsigned int num) {
         if (num > screen->page->width)
                 num = screen->page->width;
 
-        screen_cursor_set(screen, screen->cursor_x + num, screen->cursor_y);
+        screen_cursor_set(screen, screen->state.cursor_x + num, screen->state.cursor_y);
 }
 
 static void screen_cursor_right_tab(term_screen *screen, unsigned int num) {
         unsigned int i;
 
-        i = screen->cursor_x;
+        i = screen->state.cursor_x;
         while (i + 1 < screen->page->width && num > 0) {
                 if (screen_tab_is_set(screen, ++i))
                         --num;
         }
 
-        screen_cursor_set(screen, i, screen->cursor_y);
+        screen_cursor_set(screen, i, screen->state.cursor_y);
 }
 
 static void screen_cursor_up(term_screen *screen, unsigned int num, bool scroll) {
         unsigned int max;
 
-        if (screen->cursor_y < screen->page->scroll_idx) {
-                if (num > screen->cursor_y)
-                        num = screen->cursor_y;
+        if (screen->state.cursor_y < screen->page->scroll_idx) {
+                if (num > screen->state.cursor_y)
+                        num = screen->state.cursor_y;
 
-                screen_cursor_set(screen, screen->cursor_x, screen->cursor_y - num);
+                screen_cursor_set(screen, screen->state.cursor_x, screen->state.cursor_y - num);
         } else {
-                max = screen->cursor_y - screen->page->scroll_idx;
+                max = screen->state.cursor_y - screen->page->scroll_idx;
                 if (num > max) {
                         if (num < 1)
                                 return;
@@ -321,14 +317,14 @@ static void screen_cursor_up(term_screen *screen, unsigned int num, bool scroll)
                                 screen_age_cursor(screen);
 
                         if (scroll)
-                                term_page_scroll_down(screen->page, num - max, &screen->attr, screen->age, NULL);
+                                term_page_scroll_down(screen->page, num - max, &screen->state.attr, screen->age, NULL);
 
-                        screen->cursor_y = screen->page->scroll_idx;
+                        screen->state.cursor_y = screen->page->scroll_idx;
 
                         if (!(screen->flags & TERM_FLAG_HIDE_CURSOR))
                                 screen_age_cursor(screen);
                 } else {
-                        screen_cursor_set(screen, screen->cursor_x, screen->cursor_y - num);
+                        screen_cursor_set(screen, screen->state.cursor_x, screen->state.cursor_y - num);
                 }
         }
 }
@@ -336,13 +332,13 @@ static void screen_cursor_up(term_screen *screen, unsigned int num, bool scroll)
 static void screen_cursor_down(term_screen *screen, unsigned int num, bool scroll) {
         unsigned int max;
 
-        if (screen->cursor_y >= screen->page->scroll_idx + screen->page->scroll_num) {
+        if (screen->state.cursor_y >= screen->page->scroll_idx + screen->page->scroll_num) {
                 if (num > screen->page->height)
                         num = screen->page->height;
 
-                screen_cursor_set(screen, screen->cursor_x, screen->cursor_y - num);
+                screen_cursor_set(screen, screen->state.cursor_x, screen->state.cursor_y - num);
         } else {
-                max = screen->page->scroll_idx + screen->page->scroll_num - 1 - screen->cursor_y;
+                max = screen->page->scroll_idx + screen->page->scroll_num - 1 - screen->state.cursor_y;
                 if (num > max) {
                         if (num < 1)
                                 return;
@@ -351,16 +347,42 @@ static void screen_cursor_down(term_screen *screen, unsigned int num, bool scrol
                                 screen_age_cursor(screen);
 
                         if (scroll)
-                                term_page_scroll_up(screen->page, num - max, &screen->attr, screen->age, screen->history);
+                                term_page_scroll_up(screen->page, num - max, &screen->state.attr, screen->age, screen->history);
 
-                        screen->cursor_y = screen->page->scroll_idx + screen->page->scroll_num - 1;
+                        screen->state.cursor_y = screen->page->scroll_idx + screen->page->scroll_num - 1;
 
                         if (!(screen->flags & TERM_FLAG_HIDE_CURSOR))
                                 screen_age_cursor(screen);
                 } else {
-                        screen_cursor_set(screen, screen->cursor_x, screen->cursor_y + num);
+                        screen_cursor_set(screen, screen->state.cursor_x, screen->state.cursor_y + num);
                 }
         }
+}
+
+static void screen_save_state(term_screen *screen, term_state *where) {
+        *where = screen->state;
+}
+
+static void screen_restore_state(term_screen *screen, term_state *from) {
+        screen_cursor_set(screen, from->cursor_x, from->cursor_y);
+        screen->state = *from;
+}
+
+static void screen_reset_page(term_screen *screen, term_page *page) {
+        term_page_set_scroll_region(page, 0, page->height);
+        term_page_erase(page, 0, 0, page->width, page->height, &screen->state.attr, screen->age, false);
+}
+
+static void screen_change_alt(term_screen *screen, bool set) {
+        if (set) {
+                screen->page = screen->page_alt;
+                screen->history = NULL;
+        } else {
+                screen->page = screen->page_main;
+                screen->history = screen->history_main;
+        }
+
+        screen->page->age = screen->age;
 }
 
 static inline void set_reset(term_screen *screen, unsigned int flag, bool set) {
@@ -388,7 +410,7 @@ static void screen_mode_change(term_screen *screen, unsigned int mode, bool dec,
                          * DECOM: origin-mode
                          * TODO
                          */
-                        set_reset(screen, TERM_FLAG_ORIGIN_MODE, set);
+                        screen->state.origin_mode = set;
                 }
 
                 break;
@@ -398,7 +420,7 @@ static void screen_mode_change(term_screen *screen, unsigned int mode, bool dec,
                          * DECAWN: auto-wrap mode
                          * TODO
                          */
-                        set_reset(screen, TERM_FLAG_AUTO_WRAP, set);
+                        screen->state.auto_wrap = set;
                 }
 
                 break;
@@ -423,6 +445,73 @@ static void screen_mode_change(term_screen *screen, unsigned int mode, bool dec,
                 }
 
                 break;
+        case 47:
+                if (dec) {
+                        /*
+                         * XTERM-ASB: alternate-screen-buffer
+                         * This enables/disables the alternate screen-buffer.
+                         * It effectively saves the current page content and
+                         * allows you to restore it when changing to the
+                         * original screen-buffer again.
+                         */
+                        screen_change_alt(screen, set);
+                }
+
+                break;
+        case 1047:
+                if (dec) {
+                        /*
+                         * XTERM-ASBPE: alternate-screen-buffer-post-erase
+                         * This is the same as XTERM-ASB but erases the
+                         * alternate screen-buffer before switching back to the
+                         * original buffer. Use it to discard any data on the
+                         * alternate screen buffer when done.
+                         */
+                        if (!set)
+                                screen_reset_page(screen, screen->page_alt);
+
+                        screen_change_alt(screen, set);
+                }
+
+                break;
+        case 1048:
+                if (dec) {
+                        /*
+                         * XTERM-ASBCS: alternate-screen-buffer-cursor-state
+                         * This has the same effect as DECSC/DECRC, but uses a
+                         * separate state buffer. It is usually used in
+                         * combination with alternate screen buffers to provide
+                         * stacked state storage.
+                         */
+                        if (set)
+                                screen_save_state(screen, &screen->saved_alt);
+                        else
+                                screen_restore_state(screen, &screen->saved_alt);
+                }
+
+                break;
+        case 1049:
+                if (dec) {
+                        /*
+                         * XTERM-ASBX: alternate-screen-buffer-extended
+                         * This combines XTERM-ASBPE and XTERM-ASBCS somewhat.
+                         * When enabling, state is saved, alternate screen
+                         * buffer is activated and cleared.
+                         * When disabled, alternate screen buffer is cleared,
+                         * then normal screen buffer is enabled and state is
+                         * restored.
+                         */
+                        if (set)
+                                screen_save_state(screen, &screen->saved_alt);
+
+                        screen_reset_page(screen, screen->page_alt);
+                        screen_change_alt(screen, set);
+
+                        if (!set)
+                                screen_restore_state(screen, &screen->saved_alt);
+                }
+
+                break;
         }
 }
 
@@ -435,19 +524,19 @@ static uint32_t screen_map(term_screen *screen, uint32_t val) {
          * identity. */
         switch (val) {
         case 33 ... 126:
-                if (screen->glt) {
-                        nval = (**screen->glt)[val - 32];
-                        screen->glt = NULL;
+                if (screen->state.glt) {
+                        nval = (**screen->state.glt)[val - 32];
+                        screen->state.glt = NULL;
                 } else {
-                        nval = (**screen->gl)[val - 32];
+                        nval = (**screen->state.gl)[val - 32];
                 }
                 break;
         case 160 ... 255:
-                if (screen->grt) {
-                        nval = (**screen->grt)[val - 160];
-                        screen->grt = NULL;
+                if (screen->state.grt) {
+                        nval = (**screen->state.grt)[val - 160];
+                        screen->state.grt = NULL;
                 } else {
-                        nval = (**screen->gr)[val - 160];
+                        nval = (**screen->state.gr)[val - 160];
                 }
                 break;
         }
@@ -471,20 +560,20 @@ static int screen_GRAPHIC(term_screen *screen, const term_seq *seq) {
         term_char_t ch = TERM_CHAR_NULL;
         uint32_t c;
 
-        if (screen->cursor_x + 1 == screen->page->width
+        if (screen->state.cursor_x + 1 == screen->page->width
             && screen->flags & TERM_FLAG_PENDING_WRAP
-            && screen->flags & TERM_FLAG_AUTO_WRAP) {
+            && screen->state.auto_wrap) {
                 screen_cursor_down(screen, 1, true);
-                screen_cursor_set(screen, 0, screen->cursor_y);
+                screen_cursor_set(screen, 0, screen->state.cursor_y);
         }
 
         screen_cursor_clear_wrap(screen);
 
         c = screen_map(screen, seq->terminator);
         ch = term_char_merge(ch, screen_map(screen, c));
-        term_page_write(screen->page, screen->cursor_x, screen->cursor_y, ch, 1, &screen->attr, screen->age, false);
+        term_page_write(screen->page, screen->state.cursor_x, screen->state.cursor_y, ch, 1, &screen->state.attr, screen->age, false);
 
-        if (screen->cursor_x + 1 == screen->page->width)
+        if (screen->state.cursor_x + 1 == screen->page->width)
                 screen->flags |= TERM_FLAG_PENDING_WRAP;
         else
                 screen_cursor_right(screen, 1);
@@ -556,7 +645,7 @@ static int screen_CHA(term_screen *screen, const term_seq *seq) {
                 pos = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        screen_cursor_set(screen, pos - 1, screen->cursor_y);
+        screen_cursor_set(screen, pos - 1, screen->state.cursor_y);
 
         return 0;
 }
@@ -635,7 +724,7 @@ static int screen_CR(term_screen *screen, const term_seq *seq) {
          */
 
         screen_cursor_clear_wrap(screen);
-        screen_cursor_set(screen, 0, screen->cursor_y);
+        screen_cursor_set(screen, 0, screen->state.cursor_y);
 
         return 0;
 }
@@ -901,7 +990,7 @@ static int screen_DCH(term_screen *screen, const term_seq *seq) {
                 num = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        term_page_delete_cells(screen->page, screen->cursor_x, screen->cursor_y, num, &screen->attr, screen->age);
+        term_page_delete_cells(screen->page, screen->state.cursor_x, screen->state.cursor_y, num, &screen->state.attr, screen->age);
 
         return 0;
 }
@@ -1254,14 +1343,7 @@ static int screen_DECRC(term_screen *screen, const term_seq *seq) {
          * state for the main display and the status line.
          */
 
-        screen->attr = screen->saved.attr;
-        screen->gl = screen->saved.gl;
-        screen->gr = screen->saved.gr;
-        screen->glt = screen->saved.glt;
-        screen->grt = screen->saved.grt;
-        set_reset(screen, TERM_FLAG_AUTO_WRAP, screen->flags & TERM_FLAG_AUTO_WRAP);
-        set_reset(screen, TERM_FLAG_ORIGIN_MODE, screen->flags & TERM_FLAG_ORIGIN_MODE);
-        screen_cursor_set(screen, screen->saved.cursor_x, screen->saved.cursor_y);
+        screen_restore_state(screen, &screen->saved);
 
         return 0;
 }
@@ -1468,15 +1550,7 @@ static int screen_DECSC(term_screen *screen, const term_seq *seq) {
          *   * Any single shift 2 (SS2) or single shift 3 (SS3) functions sent
          */
 
-        screen->saved.cursor_x = screen->cursor_x;
-        screen->saved.cursor_y = screen->cursor_y;
-        screen->saved.attr = screen->attr;
-        screen->saved.gl = screen->gl;
-        screen->saved.gr = screen->gr;
-        screen->saved.glt = screen->glt;
-        screen->saved.grt = screen->grt;
-        screen->saved.flags = screen->flags & (TERM_FLAG_AUTO_WRAP
-                                               | TERM_FLAG_ORIGIN_MODE);
+        screen_save_state(screen, &screen->saved);
 
         return 0;
 }
@@ -1503,10 +1577,10 @@ static int screen_DECSCA(term_screen *screen, const term_seq *seq) {
         switch (mode) {
         case 0:
         case 2:
-                screen->attr.protect = 0;
+                screen->state.attr.protect = 0;
                 break;
         case 1:
-                screen->attr.protect = 1;
+                screen->state.attr.protect = 1;
                 break;
         }
 
@@ -1671,21 +1745,21 @@ static int screen_DECSED(term_screen *screen, const term_seq *seq) {
         switch (mode) {
         case 0:
                 term_page_erase(screen->page,
-                                screen->cursor_x, screen->cursor_y,
+                                screen->state.cursor_x, screen->state.cursor_y,
                                 screen->page->width, screen->page->height,
-                                &screen->attr, screen->age, true);
+                                &screen->state.attr, screen->age, true);
                 break;
         case 1:
                 term_page_erase(screen->page,
                                 0, 0,
-                                screen->cursor_x, screen->cursor_y,
-                                &screen->attr, screen->age, true);
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, true);
                 break;
         case 2:
                 term_page_erase(screen->page,
                                 0, 0,
                                 screen->page->width, screen->page->height,
-                                &screen->attr, screen->age, true);
+                                &screen->state.attr, screen->age, true);
                 break;
         }
 
@@ -1717,21 +1791,21 @@ static int screen_DECSEL(term_screen *screen, const term_seq *seq) {
         switch (mode) {
         case 0:
                 term_page_erase(screen->page,
-                                screen->cursor_x, screen->cursor_y,
-                                screen->page->width, screen->cursor_y,
-                                &screen->attr, screen->age, true);
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                screen->page->width, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, true);
                 break;
         case 1:
                 term_page_erase(screen->page,
-                                0, screen->cursor_y,
-                                screen->cursor_x, screen->cursor_y,
-                                &screen->attr, screen->age, true);
+                                0, screen->state.cursor_y,
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, true);
                 break;
         case 2:
                 term_page_erase(screen->page,
-                                0, screen->cursor_y,
-                                screen->page->width, screen->cursor_y,
-                                &screen->attr, screen->age, true);
+                                0, screen->state.cursor_y,
+                                screen->page->width, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, true);
                 break;
         }
 
@@ -1977,8 +2051,7 @@ static int screen_DECSTBM(term_screen *screen, const term_seq *seq) {
                 bottom = screen->page->height;
         }
 
-        term_page_set_scroll_region(screen->page_main, top - 1, bottom - top + 1);
-        term_page_set_scroll_region(screen->page_alt, top - 1, bottom - top + 1);
+        term_page_set_scroll_region(screen->page, top - 1, bottom - top + 1);
         screen_cursor_clear_wrap(screen);
         screen_cursor_set(screen, 0, 0);
 
@@ -2078,7 +2151,7 @@ static int screen_DL(term_screen *screen, const term_seq *seq) {
         if (seq->args[0] > 0)
                 num = seq->args[0];
 
-        term_page_delete_lines(screen->page, screen->cursor_y, num, &screen->attr, screen->age);
+        term_page_delete_lines(screen->page, screen->state.cursor_y, num, &screen->state.attr, screen->age);
 
         return 0;
 }
@@ -2123,9 +2196,9 @@ static int screen_ECH(term_screen *screen, const term_seq *seq) {
                 num = seq->args[0];
 
         term_page_erase(screen->page,
-                        screen->cursor_x, screen->cursor_y,
-                        screen->cursor_x + num, screen->cursor_y,
-                        &screen->attr, screen->age, false);
+                        screen->state.cursor_x, screen->state.cursor_y,
+                        screen->state.cursor_x + num, screen->state.cursor_y,
+                        &screen->state.attr, screen->age, false);
 
         return 0;
 }
@@ -2154,21 +2227,21 @@ static int screen_ED(term_screen *screen, const term_seq *seq) {
         switch (mode) {
         case 0:
                 term_page_erase(screen->page,
-                                screen->cursor_x, screen->cursor_y,
+                                screen->state.cursor_x, screen->state.cursor_y,
                                 screen->page->width, screen->page->height,
-                                &screen->attr, screen->age, false);
+                                &screen->state.attr, screen->age, false);
                 break;
         case 1:
                 term_page_erase(screen->page,
                                 0, 0,
-                                screen->cursor_x, screen->cursor_y,
-                                &screen->attr, screen->age, false);
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, false);
                 break;
         case 2:
                 term_page_erase(screen->page,
                                 0, 0,
                                 screen->page->width, screen->page->height,
-                                &screen->attr, screen->age, false);
+                                &screen->state.attr, screen->age, false);
                 break;
         }
 
@@ -2198,21 +2271,21 @@ static int screen_EL(term_screen *screen, const term_seq *seq) {
         switch (mode) {
         case 0:
                 term_page_erase(screen->page,
-                                screen->cursor_x, screen->cursor_y,
-                                screen->page->width, screen->cursor_y,
-                                &screen->attr, screen->age, false);
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                screen->page->width, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, false);
                 break;
         case 1:
                 term_page_erase(screen->page,
-                                0, screen->cursor_y,
-                                screen->cursor_x, screen->cursor_y,
-                                &screen->attr, screen->age, false);
+                                0, screen->state.cursor_y,
+                                screen->state.cursor_x, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, false);
                 break;
         case 2:
                 term_page_erase(screen->page,
-                                0, screen->cursor_y,
-                                screen->page->width, screen->cursor_y,
-                                &screen->attr, screen->age, false);
+                                0, screen->state.cursor_y,
+                                screen->page->width, screen->state.cursor_y,
+                                &screen->state.attr, screen->age, false);
                 break;
         }
 
@@ -2271,7 +2344,7 @@ static int screen_HPA(term_screen *screen, const term_seq *seq) {
                 num = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        screen_cursor_set(screen, num - 1, screen->cursor_y);
+        screen_cursor_set(screen, num - 1, screen->state.cursor_y);
 
         return 0;
 }
@@ -2327,7 +2400,7 @@ static int screen_HTS(term_screen *screen, const term_seq *seq) {
 
         unsigned int pos;
 
-        pos = screen->cursor_x;
+        pos = screen->state.cursor_x;
         if (screen->page->width > 0)
                 screen->tabs[pos / 8] |= 1U << (pos % 8);
 
@@ -2372,7 +2445,7 @@ static int screen_ICH(term_screen *screen, const term_seq *seq) {
                 num = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        term_page_insert_cells(screen->page, screen->cursor_x, screen->cursor_y, num, &screen->attr, screen->age);
+        term_page_insert_cells(screen->page, screen->state.cursor_x, screen->state.cursor_y, num, &screen->state.attr, screen->age);
 
         return 0;
 }
@@ -2398,7 +2471,7 @@ static int screen_IL(term_screen *screen, const term_seq *seq) {
                 num = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        term_page_insert_lines(screen->page, screen->cursor_y, num, &screen->attr, screen->age);
+        term_page_insert_lines(screen->page, screen->state.cursor_y, num, &screen->state.attr, screen->age);
 
         return 0;
 }
@@ -2424,7 +2497,7 @@ static int screen_LF(term_screen *screen, const term_seq *seq) {
 
         screen_cursor_down(screen, 1, true);
         if (screen->flags & TERM_FLAG_NEWLINE_MODE)
-                screen_cursor_left(screen, screen->cursor_x);
+                screen_cursor_left(screen, screen->state.cursor_x);
 
         return 0;
 }
@@ -2435,7 +2508,7 @@ static int screen_LS1R(term_screen *screen, const term_seq *seq) {
          * Map G1 into GR.
          */
 
-        screen->gr = &screen->g1;
+        screen->state.gr = &screen->g1;
 
         return 0;
 }
@@ -2446,7 +2519,7 @@ static int screen_LS2(term_screen *screen, const term_seq *seq) {
          * Map G2 into GL.
          */
 
-        screen->gl = &screen->g2;
+        screen->state.gl = &screen->g2;
 
         return 0;
 }
@@ -2457,7 +2530,7 @@ static int screen_LS2R(term_screen *screen, const term_seq *seq) {
          * Map G2 into GR.
          */
 
-        screen->gr = &screen->g2;
+        screen->state.gr = &screen->g2;
 
         return 0;
 }
@@ -2468,7 +2541,7 @@ static int screen_LS3(term_screen *screen, const term_seq *seq) {
          * Map G3 into GL.
          */
 
-        screen->gl = &screen->g3;
+        screen->state.gl = &screen->g3;
 
         return 0;
 }
@@ -2479,7 +2552,7 @@ static int screen_LS3R(term_screen *screen, const term_seq *seq) {
          * Map G3 into GR.
          */
 
-        screen->gr = &screen->g3;
+        screen->state.gr = &screen->g3;
 
         return 0;
 }
@@ -2513,7 +2586,7 @@ static int screen_NEL(term_screen *screen, const term_seq *seq) {
 
         screen_cursor_clear_wrap(screen);
         screen_cursor_down(screen, 1, true);
-        screen_cursor_set(screen, 0, screen->cursor_y);
+        screen_cursor_set(screen, 0, screen->state.cursor_y);
 
         return 0;
 }
@@ -2834,7 +2907,7 @@ static int screen_SD(term_screen *screen, const term_seq *seq) {
         if (seq->args[0] > 0)
                 num = seq->args[0];
 
-        term_page_scroll_down(screen->page, num, &screen->attr, screen->age, NULL);
+        term_page_scroll_down(screen->page, num, &screen->state.attr, screen->age, NULL);
 
         return 0;
 }
@@ -2849,7 +2922,7 @@ static int screen_SGR(term_screen *screen, const term_seq *seq) {
         int v;
 
         if (seq->n_args < 1) {
-                zero(screen->attr);
+                zero(screen->state.attr);
                 return 0;
         }
 
@@ -2857,67 +2930,67 @@ static int screen_SGR(term_screen *screen, const term_seq *seq) {
                 v = seq->args[i];
                 switch (v) {
                 case 1:
-                        screen->attr.bold = 1;
+                        screen->state.attr.bold = 1;
                         break;
                 case 3:
-                        screen->attr.italic = 1;
+                        screen->state.attr.italic = 1;
                         break;
                 case 4:
-                        screen->attr.underline = 1;
+                        screen->state.attr.underline = 1;
                         break;
                 case 5:
-                        screen->attr.blink = 1;
+                        screen->state.attr.blink = 1;
                         break;
                 case 7:
-                        screen->attr.inverse = 1;
+                        screen->state.attr.inverse = 1;
                         break;
                 case 8:
-                        screen->attr.hidden = 1;
+                        screen->state.attr.hidden = 1;
                         break;
                 case 22:
-                        screen->attr.bold = 0;
+                        screen->state.attr.bold = 0;
                         break;
                 case 23:
-                        screen->attr.italic = 0;
+                        screen->state.attr.italic = 0;
                         break;
                 case 24:
-                        screen->attr.underline = 0;
+                        screen->state.attr.underline = 0;
                         break;
                 case 25:
-                        screen->attr.blink = 0;
+                        screen->state.attr.blink = 0;
                         break;
                 case 27:
-                        screen->attr.inverse = 0;
+                        screen->state.attr.inverse = 0;
                         break;
                 case 28:
-                        screen->attr.hidden = 0;
+                        screen->state.attr.hidden = 0;
                         break;
                 case 30 ... 37:
-                        screen->attr.fg.ccode = v - 30 + TERM_CCODE_BLACK;
+                        screen->state.attr.fg.ccode = v - 30 + TERM_CCODE_BLACK;
                         break;
                 case 39:
-                        screen->attr.fg.ccode = 0;
+                        screen->state.attr.fg.ccode = 0;
                         break;
                 case 40 ... 47:
-                        screen->attr.bg.ccode = v - 40 + TERM_CCODE_BLACK;
+                        screen->state.attr.bg.ccode = v - 40 + TERM_CCODE_BLACK;
                         break;
                 case 49:
-                        screen->attr.bg.ccode = 0;
+                        screen->state.attr.bg.ccode = 0;
                         break;
                 case 90 ... 97:
-                        screen->attr.fg.ccode = v - 90 + TERM_CCODE_LIGHT_BLACK;
+                        screen->state.attr.fg.ccode = v - 90 + TERM_CCODE_LIGHT_BLACK;
                         break;
                 case 100 ... 107:
-                        screen->attr.bg.ccode = v - 100 + TERM_CCODE_LIGHT_BLACK;
+                        screen->state.attr.bg.ccode = v - 100 + TERM_CCODE_LIGHT_BLACK;
                         break;
                 case 38:
                         /* fallthrough */
                 case 48:
 
                         if (v == 38)
-                                dst = &screen->attr.fg;
+                                dst = &screen->state.attr.fg;
                         else
-                                dst = &screen->attr.bg;
+                                dst = &screen->state.attr.bg;
 
                         ++i;
                         if (i >= seq->n_args)
@@ -2955,7 +3028,7 @@ static int screen_SGR(term_screen *screen, const term_seq *seq) {
                 case -1:
                         /* fallthrough */
                 case 0:
-                        zero(screen->attr);
+                        zero(screen->state.attr);
                         break;
                 }
         }
@@ -2969,7 +3042,7 @@ static int screen_SI(term_screen *screen, const term_seq *seq) {
          * Map G0 into GL.
          */
 
-        screen->gl = &screen->g0;
+        screen->state.gl = &screen->g0;
 
         return 0;
 }
@@ -3009,7 +3082,7 @@ static int screen_SO(term_screen *screen, const term_seq *seq) {
          * Map G1 into GL.
          */
 
-        screen->gl = &screen->g1;
+        screen->state.gl = &screen->g1;
 
         return 0;
 }
@@ -3030,7 +3103,7 @@ static int screen_SS2(term_screen *screen, const term_seq *seq) {
          * Temporarily map G2 into GL for the next graphics character.
          */
 
-        screen->glt = &screen->g2;
+        screen->state.glt = &screen->g2;
 
         return 0;
 }
@@ -3041,7 +3114,7 @@ static int screen_SS3(term_screen *screen, const term_seq *seq) {
          * Temporarily map G3 into GL for the next graphics character
          */
 
-        screen->glt = &screen->g3;
+        screen->state.glt = &screen->g3;
 
         return 0;
 }
@@ -3077,7 +3150,7 @@ static int screen_SU(term_screen *screen, const term_seq *seq) {
         if (seq->args[0] > 0)
                 num = seq->args[0];
 
-        term_page_scroll_up(screen->page, num, &screen->attr, screen->age, screen->history);
+        term_page_scroll_up(screen->page, num, &screen->state.attr, screen->age, screen->history);
 
         return 0;
 }
@@ -3116,7 +3189,7 @@ static int screen_TBC(term_screen *screen, const term_seq *seq) {
 
         switch (mode) {
         case 0:
-                pos = screen->cursor_x;
+                pos = screen->state.cursor_x;
                 if (screen->page->width > 0)
                         screen->tabs[pos / 8] &= ~(1U << (pos % 8));
                 break;
@@ -3147,7 +3220,7 @@ static int screen_VPA(term_screen *screen, const term_seq *seq) {
                 pos = seq->args[0];
 
         screen_cursor_clear_wrap(screen);
-        screen_cursor_set_rel(screen, screen->cursor_x, pos - 1);
+        screen_cursor_set_rel(screen, screen->state.cursor_x, pos - 1);
 
         return 0;
 }
@@ -4058,7 +4131,7 @@ int term_screen_feed_keyboard(term_screen *screen,
                               unsigned int mods) {
         _cleanup_free_ char *dyn = NULL;
         static const size_t padding = 1;
-        char buf[128], *start, *p = buf;
+        char buf[128], *start, *p;
 
         assert_return(screen, -EINVAL);
 
@@ -4104,11 +4177,11 @@ int term_screen_resize(term_screen *screen, unsigned int x, unsigned int y) {
 
         assert_return(screen, -EINVAL);
 
-        r = term_page_reserve(screen->page_main, x, y, &screen->attr, screen->age);
+        r = term_page_reserve(screen->page_main, x, y, &screen->state.attr, screen->age);
         if (r < 0)
                 return r;
 
-        r = term_page_reserve(screen->page_alt, x, y, &screen->attr, screen->age);
+        r = term_page_reserve(screen->page_alt, x, y, &screen->state.attr, screen->age);
         if (r < 0)
                 return r;
 
@@ -4124,11 +4197,11 @@ int term_screen_resize(term_screen *screen, unsigned int x, unsigned int y) {
         for (i = (screen->page->width + 7) / 8 * 8; i < x; i += 8)
                 screen->tabs[i / 8] = 0x1;
 
-        term_page_resize(screen->page_main, x, y, &screen->attr, screen->age, screen->history);
-        term_page_resize(screen->page_alt, x, y, &screen->attr, screen->age, NULL);
+        term_page_resize(screen->page_main, x, y, &screen->state.attr, screen->age, screen->history);
+        term_page_resize(screen->page_alt, x, y, &screen->state.attr, screen->age, NULL);
 
-        screen->cursor_x = screen_clamp_x(screen, screen->cursor_x);
-        screen->cursor_y = screen_clamp_x(screen, screen->cursor_y);
+        screen->state.cursor_x = screen_clamp_x(screen, screen->state.cursor_x);
+        screen->state.cursor_y = screen_clamp_x(screen, screen->state.cursor_y);
         screen_cursor_clear_wrap(screen);
 
         return 0;
@@ -4139,29 +4212,27 @@ void term_screen_soft_reset(term_screen *screen) {
 
         assert(screen);
 
-        screen->gl = &screen->g0;
-        screen->gr = &screen->g1;
-        screen->glt = NULL;
-        screen->grt = NULL;
         screen->g0 = &term_unicode_lower;
         screen->g1 = &term_unicode_upper;
         screen->g2 = &term_unicode_lower;
         screen->g3 = &term_unicode_upper;
+        screen->state.attr = screen->default_attr;
+        screen->state.gl = &screen->g0;
+        screen->state.gr = &screen->g1;
+        screen->state.glt = NULL;
+        screen->state.grt = NULL;
+        screen->state.auto_wrap = 0;
+        screen->state.origin_mode = 0;
+
+        screen->saved = screen->state;
+        screen->saved.cursor_x = 0;
+        screen->saved.cursor_y = 0;
+        screen->saved_alt = screen->saved;
 
         screen->page = screen->page_main;
         screen->history = screen->history_main;
         screen->flags = TERM_FLAG_7BIT_MODE;
         screen->conformance_level = TERM_CONFORMANCE_LEVEL_VT400;
-        screen->attr = screen->default_attr;
-
-        screen->saved.cursor_x = 0;
-        screen->saved.cursor_y = 0;
-        screen->saved.attr = screen->attr;
-        screen->saved.gl = screen->gl;
-        screen->saved.gr = screen->gr;
-        screen->saved.glt = NULL;
-        screen->saved.grt = NULL;
-        screen->flags = 0;
 
         for (i = 0; i < screen->page->width; i += 8)
                 screen->tabs[i / 8] = 0x1;
@@ -4175,10 +4246,10 @@ void term_screen_hard_reset(term_screen *screen) {
 
         term_screen_soft_reset(screen);
         zero(screen->utf8);
-        screen->cursor_x = 0;
-        screen->cursor_y = 0;
-        term_page_erase(screen->page_main, 0, 0, screen->page->width, screen->page->height, &screen->attr, screen->age, false);
-        term_page_erase(screen->page_alt, 0, 0, screen->page->width, screen->page->height, &screen->attr, screen->age, false);
+        screen->state.cursor_x = 0;
+        screen->state.cursor_y = 0;
+        term_page_erase(screen->page_main, 0, 0, screen->page->width, screen->page->height, &screen->state.attr, screen->age, false);
+        term_page_erase(screen->page_alt, 0, 0, screen->page->width, screen->page->height, &screen->state.attr, screen->age, false);
 }
 
 int term_screen_set_answerback(term_screen *screen, const char *answerback) {
@@ -4248,7 +4319,7 @@ int term_screen_draw(term_screen *screen,
                         cw = MAX(cell->cwidth, 1U);
 
                         attr = cell->attr;
-                        if (i == screen->cursor_x && j == screen->cursor_y &&
+                        if (i == screen->state.cursor_x && j == screen->state.cursor_y &&
                             !(screen->flags & TERM_FLAG_HIDE_CURSOR))
                                 attr.inverse ^= 1;
 

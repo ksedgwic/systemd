@@ -250,6 +250,7 @@ SOCKETS_TARGET_WANTS =
 BUSNAMES_TARGET_WANTS =
 TIMERS_TARGET_WANTS =
 USER_SOCKETS_TARGET_WANTS =
+USER_DEFAULT_TARGET_WANTS =
 USER_BUSNAMES_TARGET_WANTS =
 
 SYSTEM_UNIT_ALIASES =
@@ -270,6 +271,7 @@ install-target-wants-hook:
 	what="$(TIMERS_TARGET_WANTS)" && wants=timers.target && dir=$(systemunitdir) && $(add-wants)
 	what="$(SLICES_TARGET_WANTS)" && wants=slices.target && dir=$(systemunitdir) && $(add-wants)
 	what="$(USER_SOCKETS_TARGET_WANTS)" && wants=sockets.target && dir=$(userunitdir) && $(add-wants)
+	what="$(USER_DEFAULT_TARGET_WANTS)" && wants=default.target && dir=$(userunitdir) && $(add-wants)
 
 install-busnames-target-wants-hook:
 	what="$(BUSNAMES_TARGET_WANTS)" && wants=busnames.target && dir=$(systemunitdir) && $(add-wants)
@@ -712,7 +714,8 @@ man/systemd.directives.xml: $(top_srcdir)/tools/make-directive-index.py $(SOURCE
 EXTRA_DIST += \
 	man/systemd.index.xml \
 	man/index.html \
-	man/systemd.directives.xml
+	man/systemd.directives.xml \
+	man/glib-event-glue.c
 
 CLEANFILES += \
 	man/systemd.index.xml \
@@ -2514,13 +2517,16 @@ nodist_systemunit_DATA += \
 dist_systemunit_DATA += \
 	units/systemd-bus-proxyd.socket
 
-dist_userunit_DATA += \
-	units/user/systemd-bus-proxyd.socket \
+nodist_userunit_DATA += \
 	units/user/systemd-bus-proxyd@.service
+
+dist_userunit_DATA += \
+	units/user/systemd-bus-proxyd.socket
 endif
 
 EXTRA_DIST += \
-	units/systemd-bus-proxyd@.service.in
+	units/systemd-bus-proxyd@.service.in \
+	units/user/systemd-bus-proxyd@.service.in
 
 # ------------------------------------------------------------------------------
 systemd_tty_ask_password_agent_SOURCES = \
@@ -3058,7 +3064,7 @@ if ENABLE_TERMINAL
 noinst_LTLIBRARIES += \
 	libsystemd-terminal.la
 
-bin_PROGRAMS += \
+rootlibexec_PROGRAMS += \
 	systemd-consoled
 
 noinst_PROGRAMS += \
@@ -3068,6 +3074,15 @@ noinst_PROGRAMS += \
 
 dist_pkgdata_DATA += \
 	src/libsystemd-terminal/unifont-glyph-array.bin
+
+nodist_userunit_DATA += \
+	units/user/systemd-consoled.service
+
+USER_DEFAULT_TARGET_WANTS += \
+	systemd-consoled.service
+
+EXTRA_DIST += \
+	units/user/systemd-consoled.service.in
 
 tests += \
 	test-term-page \

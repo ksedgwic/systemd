@@ -428,10 +428,7 @@ static int output_draw_cell_fn(term_screen *screen,
                 output_printf(o, "\e[38;2;%u;%u;%um", attr->fg.red, attr->fg.green, attr->fg.blue);
                 break;
         case TERM_CCODE_BLACK ... TERM_CCODE_WHITE:
-                if (attr->bold)
-                        output_printf(o, "\e[%um", attr->fg.ccode - TERM_CCODE_BLACK + 90);
-                else
-                        output_printf(o, "\e[%um", attr->fg.ccode - TERM_CCODE_BLACK + 30);
+                output_printf(o, "\e[%um", attr->fg.ccode - TERM_CCODE_BLACK + 30);
                 break;
         case TERM_CCODE_LIGHT_BLACK ... TERM_CCODE_LIGHT_WHITE:
                 output_printf(o, "\e[%um", attr->fg.ccode - TERM_CCODE_LIGHT_BLACK + 90);
@@ -482,7 +479,6 @@ static void output_draw_screen(Output *o, term_screen *s) {
 
         term_screen_draw(s, output_draw_cell_fn, o, NULL);
 
-        output_move_to(o, s->cursor_x + 1, s->cursor_y + 3);
         output_printf(o, "\e[m");
 }
 

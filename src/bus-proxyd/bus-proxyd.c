@@ -730,6 +730,7 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
         } else if (sd_bus_message_is_method_call(m, "org.freedesktop.DBus", "ListQueuedOwners")) {
                 struct kdbus_cmd_name_list cmd = {};
                 struct kdbus_name_list *name_list;
+                struct kdbus_cmd_free cmd_free;
                 struct kdbus_cmd_name *name;
                 _cleanup_strv_free_ char **owners = NULL;
                 char *arg0;
@@ -773,7 +774,10 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
                         }
                 }
 
-                r = ioctl(a->input_fd, KDBUS_CMD_FREE, &cmd.offset);
+                cmd_free.flags = 0;
+                cmd_free.offset = cmd.offset;
+
+                r = ioctl(a->input_fd, KDBUS_CMD_FREE, &cmd_free);
                 if (r < 0)
                         return synthetic_reply_method_errno(m, r, NULL);
 
@@ -1142,8 +1146,17 @@ int main(int argc, char *argv[]) {
                 sd_is_socket(out_fd, AF_UNIX, 0, 0) > 0;
 
         if (is_unix) {
-                getpeercred(in_fd, &ucred);
-                getpeersec(in_fd, &peersec);
+                r = getpeercred(in_fd, &ucred);
+                if (r < 0) {
+                        log_error("Failed to get peer creds: %s", strerror(-r));
+                        goto finish;
+                }
+
+                r = getpeersec(in_fd, &peersec);
+                if (r < 0) {
+                        log_error("Failed to get security creds: %s", strerror(-r));
+                        goto finish;
+                }
         }
 
         if (arg_drop_privileges) {

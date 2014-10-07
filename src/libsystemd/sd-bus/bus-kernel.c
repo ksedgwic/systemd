@@ -332,6 +332,18 @@ fail:
         return r;
 }
 
+static void unset_memfds(struct sd_bus_message *m) {
+        struct bus_body_part *part;
+        unsigned i;
+
+        assert(m);
+
+        /* Make sure the memfds are not freed twice */
+        MESSAGE_FOREACH_PART(part, i, m)
+                if (part->memfd >= 0)
+                        part->memfd = -1;
+}
+
 static int bus_kernel_make_message(sd_bus *bus, struct kdbus_msg *k) {
         sd_bus_message *m = NULL;
         struct kdbus_item *d;
@@ -627,17 +639,8 @@ static int bus_kernel_make_message(sd_bus *bus, struct kdbus_msg *k) {
         return 1;
 
 fail:
-        if (m) {
-                struct bus_body_part *part;
-                unsigned i;
-
-                /* Make sure the memfds are not freed twice */
-                MESSAGE_FOREACH_PART(part, i, m)
-                        if (part->memfd >= 0)
-                                part->memfd = -1;
-
-                sd_bus_message_unref(m);
-        }
+        unset_memfds(m);
+        sd_bus_message_unref(m);
 
         return r;
 }
@@ -796,14 +799,14 @@ int bus_kernel_connect(sd_bus *b) {
 }
 
 static void close_kdbus_msg(sd_bus *bus, struct kdbus_msg *k) {
-        uint64_t off _alignas_(8);
+        struct kdbus_cmd_free cmd;
         struct kdbus_item *d;
 
         assert(bus);
         assert(k);
 
-        off = (uint8_t *)k - (uint8_t *)bus->kdbus_buffer;
-        ioctl(bus->input_fd, KDBUS_CMD_FREE, &off);
+        cmd.flags = 0;
+        cmd.offset = (uint8_t *)k - (uint8_t *)bus->kdbus_buffer;
 
         KDBUS_ITEM_FOREACH(d, k, items) {
 
@@ -812,6 +815,8 @@ static void close_kdbus_msg(sd_bus *bus, struct kdbus_msg *k) {
                 else if (d->type == KDBUS_ITEM_PAYLOAD_MEMFD)
                         safe_close(d->memfd.fd);
         }
+
+        (void) ioctl(bus->input_fd, KDBUS_CMD_FREE, &cmd);
 }
 
 int bus_kernel_write_message(sd_bus *bus, sd_bus_message *m, bool hint_sync_call) {

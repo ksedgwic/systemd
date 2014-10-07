@@ -263,11 +263,8 @@ fail:
         if (devmqueue)
                 umount(devmqueue);
 
-        if (dev) {
-                umount(dev);
-                rmdir(dev);
-        }
-
+        umount(dev);
+        rmdir(dev);
         rmdir(temporary_mount);
 
         return r;
@@ -341,11 +338,8 @@ fail:
                 unlink(busnode);
         }
 
-        if (root) {
-                umount(root);
-                rmdir(root);
-        }
-
+        umount(root);
+        rmdir(root);
         rmdir(temporary_mount);
 
         return r;
