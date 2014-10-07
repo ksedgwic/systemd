@@ -1,12 +1,9 @@
 [Unit]
-Description=Crash recovery kernel arming
-After=network.target network-online.target remote-fs.target
+Description=Runtime Service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/kdumpctl start
-ExecStop=/usr/bin/kdumpctl stop
-RemainAfterExit=yes
+ExecStart=/bin/echo "Runtime Service Start"
 
 [Install]
 WantedBy=other.target

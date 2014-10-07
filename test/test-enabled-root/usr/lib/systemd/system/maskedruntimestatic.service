@@ -1,9 +1,6 @@
 [Unit]
-Description=Crash recovery kernel arming
-After=network.target network-online.target remote-fs.target
+Description=Masked Runtime Static Service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/kdumpctl start
-ExecStop=/usr/bin/kdumpctl stop
-RemainAfterExit=yes
+ExecStart=/bin/echo "Masked Runtime Static Service Start"

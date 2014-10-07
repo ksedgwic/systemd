@@ -6,8 +6,7 @@
 #  (at your option) any later version.
 
 [Unit]
-Description=Graphical Interface
-Documentation=man:systemd.special(7)
+Description=Other Target
 Requires=multi-user.target
 After=multi-user.target
 Conflicts=rescue.target
