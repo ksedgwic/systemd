@@ -1,0 +1,6 @@
+[Unit]
+Description=Static Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Static Service Start"
