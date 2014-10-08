@@ -1,0 +1,9 @@
+[Unit]
+Description=Templating Three Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Templating Three Start"
+
+[Install]
+WantedBy=some.target

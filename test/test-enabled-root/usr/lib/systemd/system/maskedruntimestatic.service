@@ -1,0 +1,6 @@
+[Unit]
+Description=Masked Runtime Static Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Masked Runtime Static Service Start"

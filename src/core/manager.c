@@ -465,6 +465,10 @@ int manager_new(SystemdRunningAs running_as, bool test_run, Manager **_m) {
         if (r < 0)
                 goto fail;
 
+        m->enabled = enabled_context_new();
+        if (!m->enabled)
+                goto fail;
+
         r = set_ensure_allocated(&m->startup_units, NULL);
         if (r < 0)
                 goto fail;
@@ -807,6 +811,8 @@ void manager_free(Manager *m) {
         hashmap_free(m->watch_pids1);
         hashmap_free(m->watch_pids2);
         hashmap_free(m->watch_bus);
+
+        enabled_context_free(m->enabled);
 
         set_free(m->startup_units);
         set_free(m->failed_units);

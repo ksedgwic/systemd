@@ -1358,7 +1358,8 @@ tests += \
 	test-ratelimit \
 	test-condition-util \
 	test-uid-range \
-	test-bus-policy
+	test-bus-policy \
+	test-enabled
 
 EXTRA_DIST += \
 	test/a.service \
@@ -1394,8 +1395,36 @@ EXTRA_DIST += \
 	test/bus-policy/hello.conf \
 	test/bus-policy/methods.conf \
 	test/bus-policy/ownerships.conf \
-	test/bus-policy/signals.conf
-
+	test/bus-policy/signals.conf \
+	test/test-enabled-root/usr/lib/systemd/system/masked.service \
+	test/test-enabled-root/usr/lib/systemd/system/runtime.service \
+	test/test-enabled-root/usr/lib/systemd/system/maskedruntime.service \
+	test/test-enabled-root/usr/lib/systemd/system/another.service \
+	test/test-enabled-root/usr/lib/systemd/system/templating@three.service \
+	test/test-enabled-root/usr/lib/systemd/system/maskedstatic.service \
+	test/test-enabled-root/usr/lib/systemd/system/invalid.service \
+	test/test-enabled-root/usr/lib/systemd/system/disabled.service \
+	test/test-enabled-root/usr/lib/systemd/system/templating@two.service \
+	test/test-enabled-root/usr/lib/systemd/system/unique.service \
+	test/test-enabled-root/usr/lib/systemd/system/templating@.service \
+	test/test-enabled-root/usr/lib/systemd/system/static.service \
+	test/test-enabled-root/usr/lib/systemd/system/maskedruntimestatic.service \
+	test/test-enabled-root/run/systemd/system/other.target.wants/runtime.service \
+	test/test-enabled-root/run/systemd/system/maskedruntime.service \
+	test/test-enabled-root/run/systemd/system/other.target \
+	test/test-enabled-root/run/systemd/system/maskedruntimestatic.service \
+	test/test-enabled-root/etc/systemd/system/masked.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/masked.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/another.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/templating@three.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/templating@one.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/templating@two.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/templating@four.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/also_masked.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/different.service \
+	test/test-enabled-root/etc/systemd/system/some.target.wants/aliased.service \
+	test/test-enabled-root/etc/systemd/system/maskedstatic.service \
+	test/test-enabled-root/etc/systemd/system/some.target
 
 EXTRA_DIST += \
 	src/test/test-helper.h
@@ -1777,6 +1806,15 @@ test_install_SOURCES = \
 	src/test/test-install.c
 
 test_install_LDADD = \
+	libsystemd-units.la \
+	libsystemd-label.la \
+	libsystemd-shared.la \
+	libsystemd-internal.la
+
+test_enabled_SOURCES = \
+	src/test/test-enabled.c
+
+test_enabled_LDADD = \
 	libsystemd-units.la \
 	libsystemd-label.la \
 	libsystemd-shared.la \
