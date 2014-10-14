@@ -137,23 +137,6 @@ static unsigned arg_lines = 10;
 static OutputMode arg_output = OUTPUT_SHORT;
 static bool arg_plain = false;
 
-static const struct {
-        const char *verb;
-        const char *method;
-} unit_actions[] = {
-        { "start",                 "StartUnit" },
-        { "stop",                  "StopUnit" },
-        { "condstop",              "StopUnit" },
-        { "reload",                "ReloadUnit" },
-        { "restart",               "RestartUnit" },
-        { "try-restart",           "TryRestartUnit" },
-        { "condrestart",           "TryRestartUnit" },
-        { "reload-or-restart",     "ReloadOrRestartUnit" },
-        { "reload-or-try-restart", "ReloadOrTryRestartUnit" },
-        { "condreload",            "ReloadOrTryRestartUnit" },
-        { "force-reload",          "ReloadOrTryRestartUnit" }
-};
-
 static bool original_stdout_is_tty;
 
 static int daemon_reload(sd_bus *bus, char **args);
@@ -2186,7 +2169,7 @@ static int cancel_job(sd_bus *bus, char **args) {
                                 NULL,
                                 "u", id);
                 if (r < 0) {
-                        log_error("Failed to cancel job %u: %s", (unsigned) id, bus_error_message(&error, r));
+                        log_error("Failed to cancel job %"PRIu32": %s", id, bus_error_message(&error, r));
                         return r;
                 }
         }
@@ -2350,18 +2333,18 @@ static int check_wait_response(WaitData *d) {
                 else if (streq(d->result, "canceled"))
                         log_error("Job for %s canceled.", strna(d->name));
                 else if (streq(d->result, "dependency"))
-                        log_error("A dependency job for %s failed. See 'journalctl -xn' for details.", strna(d->name));
+                        log_error("A dependency job for %s failed. See 'journalctl -xe' for details.", strna(d->name));
                 else if (!streq(d->result, "done") && !streq(d->result, "skipped")) {
                         if (d->name) {
                                 bool quotes;
 
                                 quotes = chars_intersect(d->name, SHELL_NEED_QUOTES);
 
-                                log_error("Job for %s failed. See \"systemctl status %s%s%s\" and \"journalctl -xn\" for details.",
+                                log_error("Job for %s failed. See \"systemctl status %s%s%s\" and \"journalctl -xe\" for details.",
                                           d->name,
                                           quotes ? "'" : "", d->name, quotes ? "'" : "");
                         } else
-                                log_error("Job failed. See \"journalctl -xn\" for details.");
+                                log_error("Job failed. See \"journalctl -xe\" for details.");
                 }
         }
 
@@ -2539,6 +2522,23 @@ static int check_triggering_units(
         return 0;
 }
 
+static const struct {
+        const char *verb;
+        const char *method;
+} unit_actions[] = {
+        { "start",                 "StartUnit" },
+        { "stop",                  "StopUnit" },
+        { "condstop",              "StopUnit" },
+        { "reload",                "ReloadUnit" },
+        { "restart",               "RestartUnit" },
+        { "try-restart",           "TryRestartUnit" },
+        { "condrestart",           "TryRestartUnit" },
+        { "reload-or-restart",     "ReloadOrRestartUnit" },
+        { "reload-or-try-restart", "ReloadOrTryRestartUnit" },
+        { "condreload",            "ReloadOrTryRestartUnit" },
+        { "force-reload",          "ReloadOrTryRestartUnit" }
+};
+
 static const char *verb_to_method(const char *verb) {
        uint i;
 
@@ -2704,7 +2704,7 @@ static enum action verb_to_action(const char *verb) {
 static int start_unit(sd_bus *bus, char **args) {
         _cleanup_set_free_free_ Set *s = NULL;
         _cleanup_strv_free_ char **names = NULL;
-        const char *method, *mode, *one_name;
+        const char *method, *mode, *one_name, *suffix = NULL;
         char **name;
         int r = 0;
 
@@ -2717,8 +2717,11 @@ static int start_unit(sd_bus *bus, char **args) {
                 method = verb_to_method(args[0]);
                 action = verb_to_action(args[0]);
 
-                mode = streq(args[0], "isolate") ? "isolate" :
-                       action_table[action].mode ?: arg_job_mode;
+                if (streq(args[0], "isolate")) {
+                        mode = "isolate";
+                        suffix = ".target";
+                } else
+                        mode = action_table[action].mode ?: arg_job_mode;
 
                 one_name = action_table[action].target;
         } else {
@@ -2734,7 +2737,7 @@ static int start_unit(sd_bus *bus, char **args) {
         if (one_name)
                 names = strv_new(one_name, NULL);
         else {
-                r = expand_names(bus, args + 1, NULL, &names);
+                r = expand_names(bus, args + 1, suffix, &names);
                 if (r < 0)
                         log_error("Failed to expand names: %s", strerror(-r));
         }
@@ -3409,7 +3412,7 @@ static void print_status_info(
 
         if (i->main_pid > 0 || i->control_pid > 0) {
                 if (i->main_pid > 0) {
-                        printf(" Main PID: %u", (unsigned) i->main_pid);
+                        printf(" Main PID: "PID_FMT, i->main_pid);
 
                         if (i->running) {
                                 _cleanup_free_ char *comm = NULL;
@@ -3440,7 +3443,7 @@ static void print_status_info(
                 if (i->control_pid > 0) {
                         _cleanup_free_ char *c = NULL;
 
-                        printf(" %8s: %u", i->main_pid ? "" : " Control", (unsigned) i->control_pid);
+                        printf(" %8s: "PID_FMT, i->main_pid ? "" : " Control", i->control_pid);
 
                         get_process_comm(i->control_pid, &c);
                         if (c)
@@ -3828,7 +3831,7 @@ static int print_property(const char *name, sd_bus_message *m, const char *conte
                                 return bus_log_parse_error(r);
 
                         if (u > 0)
-                                printf("%s=%u\n", name, (unsigned) u);
+                                printf("%s=%"PRIu32"\n", name, u);
                         else if (arg_all)
                                 printf("%s=\n", name);
 
@@ -3999,14 +4002,14 @@ static int print_property(const char *name, sd_bus_message *m, const char *conte
 
                                 tt = strv_join(info.argv, " ");
 
-                                printf("%s={ path=%s ; argv[]=%s ; ignore_errors=%s ; start_time=[%s] ; stop_time=[%s] ; pid=%u ; code=%s ; status=%i%s%s }\n",
+                                printf("%s={ path=%s ; argv[]=%s ; ignore_errors=%s ; start_time=[%s] ; stop_time=[%s] ; pid="PID_FMT" ; code=%s ; status=%i%s%s }\n",
                                        name,
                                        strna(info.path),
                                        strna(tt),
                                        yes_no(info.ignore),
                                        strna(format_timestamp(timestamp1, sizeof(timestamp1), info.start_timestamp)),
                                        strna(format_timestamp(timestamp2, sizeof(timestamp2), info.exit_timestamp)),
-                                       (unsigned) info. pid,
+                                       info.pid,
                                        sigchld_code_to_string(info.code),
                                        info.status,
                                        info.code == CLD_EXITED ? "" : "/",
@@ -5288,6 +5291,100 @@ finish:
         return r;
 }
 
+static int add_dependency(sd_bus *bus, char **args) {
+        _cleanup_strv_free_ char **names = NULL;
+        _cleanup_free_ char *target = NULL;
+        const char *verb = args[0];
+        UnitDependency dep;
+        int r = 0;
+
+        if (!args[1])
+                return 0;
+
+        target = unit_name_mangle_with_suffix(args[1], MANGLE_NOGLOB, ".target");
+        if (!target)
+                return log_oom();
+
+        r = mangle_names(args+2, &names);
+        if (r < 0)
+                return r;
+
+        if (streq(verb, "add-wants"))
+                dep = UNIT_WANTS;
+        else if (streq(verb, "add-requires"))
+                dep = UNIT_REQUIRES;
+        else
+                assert_not_reached("Unknown verb");
+
+        if (!bus || avoid_bus()) {
+                UnitFileChange *changes = NULL;
+                unsigned n_changes = 0;
+
+                r = unit_file_add_dependency(arg_scope, arg_runtime, arg_root, names, target, dep, arg_force, &changes, &n_changes);
+
+                if (r < 0) {
+                        log_error("Can't add dependency: %s", strerror(-r));
+                        return r;
+                }
+
+                if (!arg_quiet)
+                        dump_unit_file_changes(changes, n_changes);
+
+                unit_file_changes_free(changes, n_changes);
+
+        } else {
+                _cleanup_bus_message_unref_ sd_bus_message *reply = NULL, *m = NULL;
+                _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
+
+                r = sd_bus_message_new_method_call(
+                                bus,
+                                &m,
+                                "org.freedesktop.systemd1",
+                                "/org/freedesktop/systemd1",
+                                "org.freedesktop.systemd1.Manager",
+                                "AddDependencyUnitFiles");
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append_strv(m, names);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", target);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "s", unit_dependency_to_string(dep));
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "b", arg_runtime);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_message_append(m, "b", arg_force);
+                if (r < 0)
+                        return bus_log_create_error(r);
+
+                r = sd_bus_call(bus, m, 0, &error, &reply);
+                if (r < 0) {
+                        log_error("Failed to execute operation: %s", bus_error_message(&error, r));
+                        return r;
+                }
+
+                r = deserialize_and_dump_unit_file_changes(reply);
+                if (r < 0)
+                        return r;
+
+                if (!arg_no_reload)
+                        r = daemon_reload(bus, args);
+                else
+                        r = 0;
+        }
+
+        return r;
+}
+
 static int preset_all(sd_bus *bus, char **args) {
         UnitFileChange *changes = NULL;
         unsigned n_changes = 0;
@@ -5533,6 +5630,10 @@ static void systemctl_help(void) {
                "  unmask NAME...                  Unmask one or more units\n"
                "  link PATH...                    Link one or more units files into\n"
                "                                  the search path\n"
+               "  add-wants TARGET NAME...        Add 'Wants' dependency for the target\n"
+               "                                  on specified one or more units\n"
+               "  add-requires TARGET NAME...     Add 'Requires' dependency for the target\n"
+               "                                  on specified one or more units\n"
                "  get-default                     Get the name of the default target\n"
                "  set-default NAME                Set the default target\n\n"
                "Machine Commands:\n"
@@ -6543,6 +6644,8 @@ static int systemctl_main(sd_bus *bus, int argc, char *argv[], int bus_error) {
                 { "get-default",           EQUAL, 1, get_default,      NOBUS },
                 { "set-property",          MORE,  3, set_property      },
                 { "is-system-running",     EQUAL, 1, is_system_running },
+                { "add-wants",             MORE,  3, add_dependency,        NOBUS },
+                { "add-requires",          MORE,  3, add_dependency,        NOBUS },
                 {}
         }, *verb = verbs;
 

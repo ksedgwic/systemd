@@ -171,7 +171,7 @@ _public_ int sd_bus_new(sd_bus **ret) {
         r->input_fd = r->output_fd = -1;
         r->message_version = 1;
         r->creds_mask |= SD_BUS_CREDS_WELL_KNOWN_NAMES|SD_BUS_CREDS_UNIQUE_NAME;
-        r->hello_flags |= KDBUS_HELLO_ACCEPT_FD;
+        r->hello_flags |= KDBUS_HELLO_ACCEPT_FD | KDBUS_HELLO_ACCEPT_MEMFD;
         r->attach_flags |= KDBUS_ATTACH_NAMES;
         r->original_pid = getpid();
 
@@ -1163,7 +1163,11 @@ int bus_set_address_user(sd_bus *b) {
 #endif
         } else {
 #ifdef ENABLE_KDBUS
-                asprintf(&b->address, KERNEL_USER_BUS_FMT, getuid());
+                int r;
+
+                r = asprintf(&b->address, KERNEL_USER_BUS_FMT, getuid());
+                if (r < 0)
+                        return -ENOMEM;
 #else
                 return -ECONNREFUSED;
 #endif

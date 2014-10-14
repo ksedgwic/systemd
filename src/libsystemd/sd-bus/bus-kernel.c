@@ -1307,9 +1307,9 @@ int bus_kernel_create_bus(const char *name, bool world, char **s) {
                 return -errno;
         }
 
-        /* The higher 32bit of the flags field are considered
-         * 'incompatible flags'. Refuse them all for now. */
-        if (make->flags > 0xFFFFFFFFULL) {
+        /* The features field are considered 'incompatible flags'.
+         * Refuse them all for now. */
+        if (make->features) {
                 safe_close(fd);
                 return -ENOTSUP;
         }
@@ -1439,14 +1439,14 @@ int bus_kernel_create_endpoint(const char *bus_name, const char *ep_name, char *
         n->size = offsetof(struct kdbus_item, str) + strlen(ep_name) + 1;
         strcpy(n->str, ep_name);
 
-        if (ioctl(fd, KDBUS_CMD_EP_MAKE, make) < 0) {
+        if (ioctl(fd, KDBUS_CMD_ENDPOINT_MAKE, make) < 0) {
                 safe_close(fd);
                 return -errno;
         }
 
-        /* The higher 32bit of the flags field are considered
-         * 'incompatible flags'. Refuse them all for now. */
-        if (make->flags > 0xFFFFFFFFULL) {
+        /* The features field are considered 'incompatible flags'.
+         * Refuse them all for now. */
+        if (make->features) {
                 safe_close(fd);
                 return -ENOTSUP;
         }
@@ -1503,7 +1503,7 @@ int bus_kernel_set_endpoint_policy(int fd, uid_t uid, BusEndpoint *ep) {
                 n = KDBUS_ITEM_NEXT(n);
         }
 
-        r = ioctl(fd, KDBUS_CMD_EP_UPDATE, update);
+        r = ioctl(fd, KDBUS_CMD_ENDPOINT_UPDATE, update);
         if (r < 0)
                 return -errno;
 
@@ -1566,6 +1566,7 @@ int bus_kernel_make_starter(
 
         hello->size = size;
         hello->conn_flags =
+                KDBUS_HELLO_ACCEPT_MEMFD |
                 (activating ? KDBUS_HELLO_ACTIVATOR : KDBUS_HELLO_POLICY_HOLDER) |
                 (accept_fd ? KDBUS_HELLO_ACCEPT_FD : 0);
         hello->pool_size = KDBUS_POOL_SIZE;
@@ -1576,7 +1577,8 @@ int bus_kernel_make_starter(
 
         /* The higher 32bit of both flags fields are considered
          * 'incompatible flags'. Refuse them all for now. */
-        if (hello->bus_flags > 0xFFFFFFFFULL ||
+        if (hello->features ||
+            hello->bus_flags > 0xFFFFFFFFULL ||
             hello->conn_flags > 0xFFFFFFFFULL)
                 return -ENOTSUP;
 

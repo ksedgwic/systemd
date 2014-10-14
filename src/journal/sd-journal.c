@@ -1375,8 +1375,11 @@ static void remove_file_real(sd_journal *j, JournalFile *f) {
         }
 
         if (j->unique_file == f) {
-                j->unique_file = NULL;
+                /* Jump to the next unique_file or NULL if that one was last */
+                j->unique_file = hashmap_next(j->files, j->unique_file->path);
                 j->unique_offset = 0;
+                if (!j->unique_file)
+                        j->unique_file_lost = true;
         }
 
         journal_file_close(f);
@@ -2490,6 +2493,7 @@ _public_ int sd_journal_query_unique(sd_journal *j, const char *field) {
         j->unique_field = f;
         j->unique_file = NULL;
         j->unique_offset = 0;
+        j->unique_file_lost = false;
 
         return 0;
 }
@@ -2506,9 +2510,13 @@ _public_ int sd_journal_enumerate_unique(sd_journal *j, const void **data, size_
         k = strlen(j->unique_field);
 
         if (!j->unique_file) {
+                if (j->unique_file_lost)
+                        return 0;
+
                 j->unique_file = hashmap_first(j->files);
                 if (!j->unique_file)
                         return 0;
+
                 j->unique_offset = 0;
         }
 
@@ -2520,6 +2528,7 @@ _public_ int sd_journal_enumerate_unique(sd_journal *j, const void **data, size_
                 size_t ol;
                 bool found;
                 int r;
+                void *release_cookie;
 
                 /* Proceed to next data object in the field's linked list */
                 if (j->unique_offset == 0) {
@@ -2538,13 +2547,10 @@ _public_ int sd_journal_enumerate_unique(sd_journal *j, const void **data, size_
 
                 /* We reached the end of the list? Then start again, with the next file */
                 if (j->unique_offset == 0) {
-                        JournalFile *n;
-
-                        n = hashmap_next(j->files, j->unique_file->path);
-                        if (!n)
+                        j->unique_file = hashmap_next(j->files, j->unique_file->path);
+                        if (!j->unique_file)
                                 return 0;
 
-                        j->unique_file = n;
                         continue;
                 }
 
@@ -2563,7 +2569,7 @@ _public_ int sd_journal_enumerate_unique(sd_journal *j, const void **data, size_
                         return -EBADMSG;
                 }
 
-                r = journal_file_object_keep(j->unique_file, o, j->unique_offset);
+                r = journal_file_object_keep(j->unique_file, o, j->unique_offset, &release_cookie);
                 if (r < 0)
                         return r;
 
@@ -2611,12 +2617,12 @@ _public_ int sd_journal_enumerate_unique(sd_journal *j, const void **data, size_
                                 found = true;
                 }
 
-                if (found)
-                        continue;
-
-                r = journal_file_object_release(j->unique_file, o, j->unique_offset);
+                r = journal_file_object_release(j->unique_file, release_cookie);
                 if (r < 0)
                         return r;
+
+                if (found)
+                        continue;
 
                 r = return_data(j, j->unique_file, o, data, l);
                 if (r < 0)
@@ -2632,6 +2638,7 @@ _public_ void sd_journal_restart_unique(sd_journal *j) {
 
         j->unique_file = NULL;
         j->unique_offset = 0;
+        j->unique_file_lost = false;
 }
 
 _public_ int sd_journal_reliable_fd(sd_journal *j) {

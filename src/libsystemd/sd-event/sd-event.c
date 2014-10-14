@@ -590,6 +590,44 @@ static struct clock_data* event_get_clock_data(sd_event *e, EventSourceType t) {
         }
 }
 
+static bool need_signal(sd_event *e, int signal) {
+        return (e->signal_sources && e->signal_sources[signal] &&
+                e->signal_sources[signal]->enabled != SD_EVENT_OFF)
+                ||
+               (signal == SIGCHLD &&
+                e->n_enabled_child_sources > 0);
+}
+
+static int event_update_signal_fd(sd_event *e) {
+        struct epoll_event ev = {};
+        bool add_to_epoll;
+        int r;
+
+        assert(e);
+
+        add_to_epoll = e->signal_fd < 0;
+
+        r = signalfd(e->signal_fd, &e->sigset, SFD_NONBLOCK|SFD_CLOEXEC);
+        if (r < 0)
+                return -errno;
+
+        e->signal_fd = r;
+
+        if (!add_to_epoll)
+                return 0;
+
+        ev.events = EPOLLIN;
+        ev.data.ptr = INT_TO_PTR(SOURCE_SIGNAL);
+
+        r = epoll_ctl(e->epoll_fd, EPOLL_CTL_ADD, e->signal_fd, &ev);
+        if (r < 0) {
+                e->signal_fd = safe_close(e->signal_fd);
+                return -errno;
+        }
+
+        return 0;
+}
+
 static void source_disconnect(sd_event_source *s) {
         sd_event *event;
 
@@ -626,11 +664,17 @@ static void source_disconnect(sd_event_source *s) {
 
         case SOURCE_SIGNAL:
                 if (s->signal.sig > 0) {
-                        if (s->signal.sig != SIGCHLD || s->event->n_enabled_child_sources == 0)
-                                assert_se(sigdelset(&s->event->sigset, s->signal.sig) == 0);
-
                         if (s->event->signal_sources)
                                 s->event->signal_sources[s->signal.sig] = NULL;
+
+                        /* If the signal was on and now it is off... */
+                        if (s->enabled != SD_EVENT_OFF && !need_signal(s->event, s->signal.sig)) {
+                                assert_se(sigdelset(&s->event->sigset, s->signal.sig) == 0);
+
+                                (void) event_update_signal_fd(s->event);
+                                /* If disabling failed, we might get a spurious event,
+                                 * but otherwise nothing bad should happen. */
+                        }
                 }
 
                 break;
@@ -640,10 +684,16 @@ static void source_disconnect(sd_event_source *s) {
                         if (s->enabled != SD_EVENT_OFF) {
                                 assert(s->event->n_enabled_child_sources > 0);
                                 s->event->n_enabled_child_sources--;
-                        }
 
-                        if (!s->event->signal_sources || !s->event->signal_sources[SIGCHLD])
-                                assert_se(sigdelset(&s->event->sigset, SIGCHLD) == 0);
+                                /* We know the signal was on, if it is off now... */
+                                if (!need_signal(s->event, SIGCHLD)) {
+                                        assert_se(sigdelset(&s->event->sigset, SIGCHLD) == 0);
+
+                                        (void) event_update_signal_fd(s->event);
+                                        /* If disabling failed, we might get a spurious event,
+                                         * but otherwise nothing bad should happen. */
+                                }
+                        }
 
                         hashmap_remove(s->event->child_sources, INT_TO_PTR(s->child.pid));
                 }
@@ -917,36 +967,6 @@ fail:
         return r;
 }
 
-static int event_update_signal_fd(sd_event *e) {
-        struct epoll_event ev = {};
-        bool add_to_epoll;
-        int r;
-
-        assert(e);
-
-        add_to_epoll = e->signal_fd < 0;
-
-        r = signalfd(e->signal_fd, &e->sigset, SFD_NONBLOCK|SFD_CLOEXEC);
-        if (r < 0)
-                return -errno;
-
-        e->signal_fd = r;
-
-        if (!add_to_epoll)
-                return 0;
-
-        ev.events = EPOLLIN;
-        ev.data.ptr = INT_TO_PTR(SOURCE_SIGNAL);
-
-        r = epoll_ctl(e->epoll_fd, EPOLL_CTL_ADD, e->signal_fd, &ev);
-        if (r < 0) {
-                e->signal_fd = safe_close(e->signal_fd);
-                return -errno;
-        }
-
-        return 0;
-}
-
 static int signal_exit_callback(sd_event_source *s, const struct signalfd_siginfo *si, void *userdata) {
         assert(s);
 
@@ -963,6 +983,7 @@ _public_ int sd_event_add_signal(
         sd_event_source *s;
         sigset_t ss;
         int r;
+        bool previous;
 
         assert_return(e, -EINVAL);
         assert_return(sig > 0, -EINVAL);
@@ -987,6 +1008,8 @@ _public_ int sd_event_add_signal(
         } else if (e->signal_sources[sig])
                 return -EBUSY;
 
+        previous = need_signal(e, sig);
+
         s = source_new(e, !ret, SOURCE_SIGNAL);
         if (!s)
                 return -ENOMEM;
@@ -997,9 +1020,10 @@ _public_ int sd_event_add_signal(
         s->enabled = SD_EVENT_ON;
 
         e->signal_sources[sig] = s;
-        assert_se(sigaddset(&e->sigset, sig) == 0);
 
-        if (sig != SIGCHLD || e->n_enabled_child_sources == 0) {
+        if (!previous) {
+                assert_se(sigaddset(&e->sigset, sig) == 0);
+
                 r = event_update_signal_fd(e);
                 if (r < 0) {
                         source_free(s);
@@ -1023,6 +1047,7 @@ _public_ int sd_event_add_child(
 
         sd_event_source *s;
         int r;
+        bool previous;
 
         assert_return(e, -EINVAL);
         assert_return(pid > 1, -EINVAL);
@@ -1038,6 +1063,8 @@ _public_ int sd_event_add_child(
 
         if (hashmap_contains(e->child_sources, INT_TO_PTR(pid)))
                 return -EBUSY;
+
+        previous = need_signal(e, SIGCHLD);
 
         s = source_new(e, !ret, SOURCE_CHILD);
         if (!s)
@@ -1057,9 +1084,9 @@ _public_ int sd_event_add_child(
 
         e->n_enabled_child_sources ++;
 
-        assert_se(sigaddset(&e->sigset, SIGCHLD) == 0);
+        if (!previous) {
+                assert_se(sigaddset(&e->sigset, SIGCHLD) == 0);
 
-        if (!e->signal_sources || !e->signal_sources[SIGCHLD]) {
                 r = event_update_signal_fd(e);
                 if (r < 0) {
                         source_free(s);
@@ -1437,23 +1464,32 @@ _public_ int sd_event_source_set_enabled(sd_event_source *s, int m) {
                 }
 
                 case SOURCE_SIGNAL:
+                        assert(need_signal(s->event, s->signal.sig));
+
                         s->enabled = m;
-                        if (s->signal.sig != SIGCHLD || s->event->n_enabled_child_sources == 0) {
+
+                        if (!need_signal(s->event, s->signal.sig)) {
                                 assert_se(sigdelset(&s->event->sigset, s->signal.sig) == 0);
-                                event_update_signal_fd(s->event);
+
+                                (void) event_update_signal_fd(s->event);
+                                /* If disabling failed, we might get a spurious event,
+                                 * but otherwise nothing bad should happen. */
                         }
 
                         break;
 
                 case SOURCE_CHILD:
+                        assert(need_signal(s->event, SIGCHLD));
+
                         s->enabled = m;
 
                         assert(s->event->n_enabled_child_sources > 0);
                         s->event->n_enabled_child_sources--;
 
-                        if (!s->event->signal_sources || !s->event->signal_sources[SIGCHLD]) {
+                        if (!need_signal(s->event, SIGCHLD)) {
                                 assert_se(sigdelset(&s->event->sigset, SIGCHLD) == 0);
-                                event_update_signal_fd(s->event);
+
+                                (void) event_update_signal_fd(s->event);
                         }
 
                         break;
@@ -1501,22 +1537,34 @@ _public_ int sd_event_source_set_enabled(sd_event_source *s, int m) {
                 }
 
                 case SOURCE_SIGNAL:
-                        s->enabled = m;
-
-                        if (s->signal.sig != SIGCHLD || s->event->n_enabled_child_sources == 0)  {
+                        /* Check status before enabling. */
+                        if (!need_signal(s->event, s->signal.sig)) {
                                 assert_se(sigaddset(&s->event->sigset, s->signal.sig) == 0);
-                                event_update_signal_fd(s->event);
+
+                                r = event_update_signal_fd(s->event);
+                                if (r < 0) {
+                                        s->enabled = SD_EVENT_OFF;
+                                        return r;
+                                }
                         }
+
+                        s->enabled = m;
                         break;
 
                 case SOURCE_CHILD:
+                        /* Check status before enabling. */
                         if (s->enabled == SD_EVENT_OFF) {
-                                s->event->n_enabled_child_sources++;
+                                if (!need_signal(s->event, SIGCHLD)) {
+                                        assert_se(sigaddset(&s->event->sigset, s->signal.sig) == 0);
 
-                                if (!s->event->signal_sources || !s->event->signal_sources[SIGCHLD]) {
-                                        assert_se(sigaddset(&s->event->sigset, SIGCHLD) == 0);
-                                        event_update_signal_fd(s->event);
+                                        r = event_update_signal_fd(s->event);
+                                        if (r < 0) {
+                                                s->enabled = SD_EVENT_OFF;
+                                                return r;
+                                        }
                                 }
+
+                                s->event->n_enabled_child_sources++;
                         }
 
                         s->enabled = m;

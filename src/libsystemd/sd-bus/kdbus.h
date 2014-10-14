@@ -500,6 +500,8 @@ enum kdbus_policy_type {
  * enum kdbus_hello_flags - flags for struct kdbus_cmd_hello
  * @KDBUS_HELLO_ACCEPT_FD:	The connection allows the reception of
  *				any passed file descriptors
+ * @KDBUS_HELLO_ACCEPT_MEMFD:	The connection allows the reception of
+ *				any passed memfd file descriptors
  * @KDBUS_HELLO_ACTIVATOR:	Special-purpose connection which registers
  *				a well-know name for a process to be started
  *				when traffic arrives
@@ -514,9 +516,10 @@ enum kdbus_policy_type {
  */
 enum kdbus_hello_flags {
 	KDBUS_HELLO_ACCEPT_FD		=  1ULL <<  0,
-	KDBUS_HELLO_ACTIVATOR		=  1ULL <<  1,
-	KDBUS_HELLO_POLICY_HOLDER	=  1ULL <<  2,
-	KDBUS_HELLO_MONITOR		=  1ULL <<  3,
+	KDBUS_HELLO_ACCEPT_MEMFD	=  1ULL <<  1,
+	KDBUS_HELLO_ACTIVATOR		=  1ULL <<  2,
+	KDBUS_HELLO_POLICY_HOLDER	=  1ULL <<  3,
+	KDBUS_HELLO_MONITOR		=  1ULL <<  4,
 };
 
 /**
@@ -554,6 +557,7 @@ enum kdbus_attach_flags {
 /**
  * struct kdbus_cmd_hello - struct to say hello to kdbus
  * @size:		The total size of the structure
+ * @features:		Feature negotiation bitmask
  * @conn_flags:		Connection flags (KDBUS_HELLO_*).
  * @attach_flags:	Mask of metadata to attach to each message sent
  *			(KDBUS_ATTACH_*)
@@ -573,6 +577,7 @@ enum kdbus_attach_flags {
  */
 struct kdbus_cmd_hello {
 	__u64 size;
+	__u64 features;
 	__u64 conn_flags;
 	__u64 attach_flags;
 	__u64 bus_flags;
@@ -596,14 +601,16 @@ enum kdbus_make_flags {
 /**
  * struct kdbus_cmd_make - struct to make a bus, an endpoint or a domain
  * @size:		The total size of the struct
+ * @features:		Feature negotiation bitmask
  * @flags:		Properties for the bus/ep/domain to create
  * @items:		Items describing details
  *
- * This structure is used with the KDBUS_CMD_BUS_MAKE, KDBUS_CMD_EP_MAKE and
- * KDBUS_CMD_DOMAIN_MAKE ioctls.
+ * This structure is used with the KDBUS_CMD_BUS_MAKE, KDBUS_CMD_ENDPOINT_MAKE
+ * and KDBUS_CMD_DOMAIN_MAKE ioctls.
  */
 struct kdbus_cmd_make {
 	__u64 size;
+	__u64 features;
 	__u64 flags;
 	struct kdbus_item items[0];
 } __attribute__((aligned(8)));
@@ -775,7 +782,7 @@ struct kdbus_cmd_match {
  *				is closed.
  * @KDBUS_CMD_DOMAIN_MAKE:	Similar to KDBUS_CMD_BUS_MAKE, but it creates a
  *				new kdbus domain.
- * @KDBUS_CMD_EP_MAKE:		Creates a new named special endpoint to talk to
+ * @KDBUS_CMD_ENDPOINT_MAKE:	Creates a new named special endpoint to talk to
  *				the bus. Such endpoints usually carry a more
  *				restrictive policy and grant restricted access
  *				to specific applications.
@@ -811,7 +818,7 @@ struct kdbus_cmd_match {
  * @KDBUS_CMD_CONN_UPDATE:	Update the properties of a connection. Used to
  *				update the metadata subscription mask and
  *				policy.
- * @KDBUS_CMD_EP_UPDATE:	Update the properties of a custom enpoint. Used
+ * @KDBUS_CMD_ENDPOINT_UPDATE:	Update the properties of a custom enpoint. Used
  *				to update the policy.
  * @KDBUS_CMD_MATCH_ADD:	Install a match which broadcast messages should
  *				be delivered to the connection.
@@ -822,7 +829,7 @@ enum kdbus_ioctl_type {
 					     struct kdbus_cmd_make),
 	KDBUS_CMD_DOMAIN_MAKE =		_IOW(KDBUS_IOCTL_MAGIC, 0x10,
 					     struct kdbus_cmd_make),
-	KDBUS_CMD_EP_MAKE =		_IOW(KDBUS_IOCTL_MAGIC, 0x20,
+	KDBUS_CMD_ENDPOINT_MAKE =	_IOW(KDBUS_IOCTL_MAGIC, 0x20,
 					     struct kdbus_cmd_make),
 
 	KDBUS_CMD_HELLO =		_IOWR(KDBUS_IOCTL_MAGIC, 0x30,
@@ -850,7 +857,7 @@ enum kdbus_ioctl_type {
 	KDBUS_CMD_CONN_UPDATE =		_IOW(KDBUS_IOCTL_MAGIC, 0x61,
 					     struct kdbus_cmd_update),
 
-	KDBUS_CMD_EP_UPDATE =		_IOW(KDBUS_IOCTL_MAGIC, 0x71,
+	KDBUS_CMD_ENDPOINT_UPDATE =	_IOW(KDBUS_IOCTL_MAGIC, 0x71,
 					     struct kdbus_cmd_update),
 
 	KDBUS_CMD_MATCH_ADD =		_IOW(KDBUS_IOCTL_MAGIC, 0x80,
