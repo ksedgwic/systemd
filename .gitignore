@@ -173,6 +173,7 @@
 /test-icmp6-rs
 /test-ellipsize
 /test-engine
+/test-enabled
 /test-env-replace
 /test-event
 /test-fdset

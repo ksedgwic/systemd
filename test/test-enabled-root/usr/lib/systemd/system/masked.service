@@ -1,0 +1,9 @@
+[Unit]
+Description=Masked Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Masked Service Start"
+
+[Install]
+WantedBy=some.target
