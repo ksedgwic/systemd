@@ -1665,6 +1665,7 @@ int unit_file_add_dependency(
                 char *target,
                 UnitDependency dep,
                 bool force,
+                EnabledContext *ec,
                 UnitFileChange **changes,
                 unsigned *n_changes) {
 
@@ -1689,7 +1690,7 @@ int unit_file_add_dependency(
         STRV_FOREACH(i, files) {
                 UnitFileState state;
 
-                state = unit_file_get_state(scope, root_dir, *i);
+                state = unit_file_get_state(scope, root_dir, *i, ec);
                 if (state < 0) {
                         log_error("Failed to get unit file state for %s: %s", *i, strerror(-state));
                         return state;
@@ -1763,7 +1764,7 @@ int unit_file_enable(
         STRV_FOREACH(i, files) {
                 UnitFileState state;
 
-                state = unit_file_get_state(scope, root_dir, *i);
+                state = unit_file_get_state(scope, root_dir, *i, NULL);
                 if (state < 0) {
                         log_error("Failed to get unit file state for %s: %s", *i, strerror(-state));
                         return state;

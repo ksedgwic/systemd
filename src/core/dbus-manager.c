@@ -1843,7 +1843,7 @@ static int method_add_dependency_unit_files(sd_bus *bus, sd_bus_message *message
 
         scope = m->running_as == SYSTEMD_SYSTEM ? UNIT_FILE_SYSTEM : UNIT_FILE_USER;
 
-        r = unit_file_add_dependency(scope, runtime, NULL, l, target, dep, force, &changes, &n_changes);
+        r = unit_file_add_dependency(scope, runtime, NULL, l, target, dep, force, NULL, &changes, &n_changes);
         if (r < 0)
                 return r;
 

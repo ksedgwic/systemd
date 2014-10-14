@@ -5320,7 +5320,7 @@ static int add_dependency(sd_bus *bus, char **args) {
                 UnitFileChange *changes = NULL;
                 unsigned n_changes = 0;
 
-                r = unit_file_add_dependency(arg_scope, arg_runtime, arg_root, names, target, dep, arg_force, &changes, &n_changes);
+                r = unit_file_add_dependency(arg_scope, arg_runtime, arg_root, names, target, dep, arg_force, NULL, &changes, &n_changes);
 
                 if (r < 0) {
                         log_error("Can't add dependency: %s", strerror(-r));
