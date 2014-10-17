@@ -76,9 +76,9 @@
 
 
 #define confirm_unit_state(unit, expected)                              \
-        assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit) == expected)
+        assert_se(unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, unit, ec) == expected)
 
-static void test_enabled(int argc, char* argv[]) {
+static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
         Hashmap *h;
         UnitFileList *p;
         Iterator i;
@@ -87,6 +87,7 @@ static void test_enabled(int argc, char* argv[]) {
 
         root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
+        /* Explicitly check each of the units. */
         confirm_unit_state("nonexistent.service",	-ENOENT);
         confirm_unit_state("invalid.service", 		-EBADMSG);
         confirm_unit_state("disabled.service", 		UNIT_FILE_DISABLED);
@@ -102,15 +103,15 @@ static void test_enabled(int argc, char* argv[]) {
         confirm_unit_state("templating@three.service",	UNIT_FILE_ENABLED);
         confirm_unit_state("unique.service", 		UNIT_FILE_ENABLED);
 
+        /* Reconcile unit_file_get_list with the return for each unit. */
         h = hashmap_new(&string_hash_ops);
-        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
-        assert_se(r >= 0);
-
+        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h, ec);
+        assert_se(r == 0);
         HASHMAP_FOREACH(p, h, i) {
                 UnitFileState s;
 
                 s = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir,
-                                        basename(p->path));
+                                        basename(p->path), ec);
 
                 /* unit_file_get_list and unit_file_get_state are
                  * a little different in some cases.  Handle these
@@ -136,6 +137,15 @@ static void test_enabled(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-        test_enabled(argc, argv);
+        _cleanup_enabled_context_ EnabledContext *ec = NULL;
+
+        /* built-in EnabledContext */
+        test_enabled(argc, argv, NULL);
+
+        /* explicit EnabledContext */
+        ec = enabled_context_new();
+        assert(ec);
+        test_enabled(argc, argv, ec);
+
         return 0;
 }
