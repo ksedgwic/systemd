@@ -1,0 +1,9 @@
+[Unit]
+Description=Runtime Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Runtime Service Start"
+
+[Install]
+WantedBy=other.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Unique Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Unique Service Start"
+
+[Install]
+WantedBy=some.target
