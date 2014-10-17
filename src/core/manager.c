@@ -354,7 +354,7 @@ static int manager_setup_signals(Manager *m) {
                 return r;
 
         /* Process signals a bit earlier than the rest of things, but
-         * later that notify_fd processing, so that the notify
+         * later than notify_fd processing, so that the notify
          * processing can still figure out to which process/service a
          * message belongs, before we reap the process. */
         r = sd_event_source_set_priority(m->signal_event_source, -5);
@@ -569,7 +569,21 @@ static int manager_setup_notify(Manager *m) {
                 r = bind(fd, &sa.sa, offsetof(struct sockaddr_un, sun_path) + strlen(sa.un.sun_path));
                 if (r < 0) {
                         log_error("bind(%s) failed: %m", sa.un.sun_path);
-                        return -errno;
+                        if (errno == EADDRINUSE) {
+                                log_notice("Removing %s socket and trying again.", m->notify_socket);
+                                r = unlink(m->notify_socket);
+                                if (r < 0) {
+                                        log_error("Failed to remove %s: %m", m->notify_socket);
+                                        return -EADDRINUSE;
+                                }
+
+                                r = bind(fd, &sa.sa, offsetof(struct sockaddr_un, sun_path) + strlen(sa.un.sun_path));
+                                if (r < 0) {
+                                        log_error("bind(%s) failed: %m", sa.un.sun_path);
+                                        return -errno;
+                                }
+                        } else
+                                return -errno;
                 }
 
                 r = setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &one, sizeof(one));
@@ -2235,7 +2249,7 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
                         uint32_t id;
 
                         if (safe_atou32(l+15, &id) < 0)
-                                log_debug("Failed to parse current job id value %s", l+15);
+                                log_warning("Failed to parse current job id value %s", l+15);
                         else
                                 m->current_job_id = MAX(m->current_job_id, id);
 
@@ -2243,7 +2257,7 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
                         uint32_t n;
 
                         if (safe_atou32(l+17, &n) < 0)
-                                log_debug("Failed to parse installed jobs counter %s", l+17);
+                                log_warning("Failed to parse installed jobs counter %s", l+17);
                         else
                                 m->n_installed_jobs += n;
 
@@ -2251,7 +2265,7 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
                         uint32_t n;
 
                         if (safe_atou32(l+14, &n) < 0)
-                                log_debug("Failed to parse failed jobs counter %s", l+14);
+                                log_warning("Failed to parse failed jobs counter %s", l+14);
                         else
                                 m->n_failed_jobs += n;
 
@@ -2260,7 +2274,7 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
 
                         b = parse_boolean(l+10);
                         if (b < 0)
-                                log_debug("Failed to parse taint /usr flag %s", l+10);
+                                log_warning("Failed to parse taint /usr flag %s", l+10);
                         else
                                 m->taint_usr = m->taint_usr || b;
 
@@ -2311,7 +2325,7 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
                         int fd;
 
                         if (safe_atoi(l + 10, &fd) < 0 || fd < 0 || !fdset_contains(fds, fd))
-                                log_debug("Failed to parse notify fd: %s", l + 10);
+                                log_warning("Failed to parse notify fd: %s", l + 10);
                         else {
                                 m->notify_event_source = sd_event_source_unref(m->notify_event_source);
                                 safe_close(m->notify_fd);
@@ -2334,14 +2348,14 @@ int manager_deserialize(Manager *m, FILE *f, FDSet *fds) {
                         int fd;
 
                         if (safe_atoi(l + 9, &fd) < 0 || fd < 0 || !fdset_contains(fds, fd))
-                                log_debug("Failed to parse kdbus fd: %s", l + 9);
+                                log_warning("Failed to parse kdbus fd: %s", l + 9);
                         else {
                                 safe_close(m->kdbus_fd);
                                 m->kdbus_fd = fdset_remove(fds, fd);
                         }
 
                 } else if (bus_track_deserialize_item(&m->deserialized_subscribed, l) == 0)
-                        log_debug("Unknown serialization item '%s'", l);
+                        log_warning("Unknown serialization item '%s'", l);
         }
 
         for (;;) {

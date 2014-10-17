@@ -1545,7 +1545,10 @@ static int exec_child(ExecCommand *command,
                                 context->protect_home,
                                 context->protect_system,
                                 context->mount_flags);
-                if (err < 0) {
+
+                if (err == -EPERM)
+                        log_warning_unit(params->unit_id, "Failed to set up file system namespace due to lack of privileges. Execution sandbox will not be in effect: %s", strerror(-err));
+                else if (err < 0) {
                         *error = EXIT_NAMESPACE;
                         return err;
                 }
@@ -1782,7 +1785,7 @@ int exec_spawn(ExecCommand *command,
                 n_fds = params->n_fds;
         }
 
-        err = exec_context_load_environment(context, &files_env);
+        err = exec_context_load_environment(context, params->unit_id, &files_env);
         if (err < 0) {
                 log_struct_unit(LOG_ERR,
                            params->unit_id,
@@ -2011,7 +2014,7 @@ void exec_command_free_array(ExecCommand **c, unsigned n) {
         }
 }
 
-int exec_context_load_environment(const ExecContext *c, char ***l) {
+int exec_context_load_environment(const ExecContext *c, const char *unit_id, char ***l) {
         char **i, **r = NULL;
 
         assert(c);
@@ -2068,7 +2071,7 @@ int exec_context_load_environment(const ExecContext *c, char ***l) {
                         }
                         /* Log invalid environment variables with filename */
                         if (p)
-                                p = strv_env_clean_log(p, pglob.gl_pathv[n]);
+                                p = strv_env_clean_log(p, unit_id, pglob.gl_pathv[n]);
 
                         if (r == NULL)
                                 r = p;
