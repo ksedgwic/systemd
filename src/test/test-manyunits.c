@@ -96,7 +96,10 @@ static void setup_manyunits(void) {
 static void test_manyunits(void) {
         time_t t0, t1;
         int r = 0;
+        int count = 0;
         Hashmap *h;
+        UnitFileList *p;
+        Iterator i;
 
         fprintf(stderr, "testing with %d unit files\n", NUNITS);
 
@@ -104,6 +107,11 @@ static void test_manyunits(void) {
         h = hashmap_new(&string_hash_ops);
         r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
         assert_se_cleanup(r >= 0);
+        HASHMAP_FOREACH(p, h, i) {
+                ++count;
+        }
+        fprintf(stderr, "saw %d units\n", count);
+        assert_se_cleanup(count == 3015);
         t1 = time(NULL);
 
         fprintf(stderr, "unit_file_get_list took %ld seconds\n",
@@ -116,7 +124,9 @@ int main(int argc, char* argv[]) {
         root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
         setup_manyunits();
+
         test_manyunits();
+
         cleanup_manyunits();
 
         return 0;
