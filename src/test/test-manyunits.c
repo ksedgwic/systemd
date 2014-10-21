@@ -93,7 +93,7 @@ static void setup_manyunits(void) {
         }
 }
 
-static void test_manyunits(void) {
+static void test_manyunits(EnabledContext *ec) {
         time_t t0, t1;
         int r = 0;
         int count = 0;
@@ -105,7 +105,7 @@ static void test_manyunits(void) {
 
         t0 = time(NULL);
         h = hashmap_new(&string_hash_ops);
-        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
+        r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h, ec);
         assert_se_cleanup(r >= 0);
         HASHMAP_FOREACH(p, h, i) {
                 ++count;
@@ -121,11 +121,16 @@ static void test_manyunits(void) {
 }
 
 int main(int argc, char* argv[]) {
+        _cleanup_enabled_context_ EnabledContext *ec = NULL;
+
         root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
         setup_manyunits();
 
-        test_manyunits();
+        ec = enabled_context_new();
+        assert(ec);
+
+        test_manyunits(ec);
 
         cleanup_manyunits();
 

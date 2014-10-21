@@ -25,6 +25,7 @@
 #include <string.h>
 #include <fnmatch.h>
 
+#include "macro.h"
 #include "util.h"
 #include "mkdir.h"
 #include "hashmap.h"
@@ -382,21 +383,124 @@ static int remove_marked_symlinks(
         return r;
 }
 
-static int find_symlinks_fd(
-                const char *name,
+EnabledContext *enabled_context_new(void) {
+        EnabledContext *ec;
+        int r;
+
+        ec = new0(EnabledContext, 1);
+        if (!ec)
+                return NULL;
+
+        r = hashmap_ensure_allocated(&ec->config_paths_forward, &string_hash_ops);
+        if (r < 0) {
+                free(ec);
+                return NULL;
+        }
+
+        r = hashmap_ensure_allocated(&ec->config_paths_reverse, &string_hash_ops);
+        if (r < 0) {
+                free(ec);
+                return NULL;
+        }
+
+        return ec;
+}
+
+void enabled_context_free(EnabledContext *ec) {
+        char *key;
+        Hashmap *h;
+
+        if (!ec)
+                return;
+
+        while ((key = hashmap_first_key(ec->config_paths_forward))) {
+                h = hashmap_steal_first(ec->config_paths_forward);
+                hashmap_free_free_free(h);
+                free(key);
+        }
+        hashmap_free_free_free(ec->config_paths_forward);
+        ec->config_paths_forward = NULL;
+
+        while ((key = hashmap_first_key(ec->config_paths_reverse))) {
+                h = hashmap_steal_first(ec->config_paths_reverse);
+                hashmap_free_free_free(h);
+                free(key);
+        }
+        hashmap_free_free_free(ec->config_paths_reverse);
+        ec->config_paths_reverse = NULL;
+
+        free(ec);
+}
+
+static int insert_link_mapping(Hashmap *h, const char * key, const char *val) {
+        int r = 0;
+        char *keycpy, *valcpy;
+
+        assert(h);
+        assert(key);
+        assert(val);
+
+        /* Make copies of the key and value */
+        keycpy = strdup(key);
+        if (!keycpy)
+                return -ENOMEM;
+        valcpy = strdup(val);
+        if (!valcpy) {
+                free(keycpy);
+                return -ENOMEM;
+        }
+
+        r = hashmap_put(h, keycpy, valcpy);
+        if (r == 1) {
+                /* Our copies were inserted, we're done */
+                return 0;
+        } else {
+                /* Either an error or the mapping already existed, either way
+                 * we don't want the key and value copies any more ...
+                 */
+                free(keycpy);
+                free(valcpy);
+                return r;
+        }
+}
+
+static int fill_enabled_context(
                 int fd,
                 const char *path,
                 const char *config_path,
-                bool *same_name_link) {
-
+                EnabledContext *ec) {
         int r = 0;
         _cleanup_closedir_ DIR *d = NULL;
+        Hashmap *config_path_forward;
+        Hashmap *config_path_reverse;
 
-        assert(name);
         assert(fd >= 0);
         assert(path);
         assert(config_path);
-        assert(same_name_link);
+        assert(ec);
+
+        config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
+        config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
+
+        /* If config_path_forward isn't cached, generate both directions */
+        if (config_path_forward == NULL) {
+                /* Initialize empty forward and reverse lookups for the
+                 * enabled context cache */
+                r = hashmap_ensure_allocated(&config_path_forward, &string_hash_ops);
+                if (r < 0) {
+                        return r;
+                }
+                r = hashmap_put(ec->config_paths_forward, strdup(config_path), config_path_forward);
+                if (r < 0)
+                        return r;
+                r = hashmap_ensure_allocated(&config_path_reverse, &string_hash_ops);
+                if (r < 0) {
+                        return r;
+                }
+                r = hashmap_put(ec->config_paths_reverse, strdup(config_path), config_path_reverse);
+                if (r < 0)
+                        return r;
+        }
 
         d = fdopendir(fd);
         if (!d) {
@@ -413,7 +517,7 @@ static int find_symlinks_fd(
                         return -errno;
 
                 if (!de)
-                        return r;
+                        break;
 
                 if (ignore_file(de->d_name))
                         continue;
@@ -441,15 +545,12 @@ static int find_symlinks_fd(
                         }
 
                         /* This will close nfd, regardless whether it succeeds or not */
-                        q = find_symlinks_fd(name, nfd, p, config_path, same_name_link);
-                        if (q > 0)
-                                return 1;
+                        q = fill_enabled_context(nfd, p, config_path, ec);
                         if (r == 0)
                                 r = q;
 
                 } else if (de->d_type == DT_LNK) {
                         _cleanup_free_ char *p = NULL, *dest = NULL;
-                        bool found_path, found_dest, b = false;
                         int q;
 
                         /* Acquire symlink name */
@@ -468,44 +569,121 @@ static int find_symlinks_fd(
                                 continue;
                         }
 
-                        /* Check if the symlink itself matches what we
-                         * are looking for */
-                        if (path_is_absolute(name))
-                                found_path = path_equal(p, name);
-                        else
-                                found_path = streq(de->d_name, name);
+                        /* Insert symlink's own full path and
+                         * name as keys pointing to the unit's
+                         * full path */
+                        q = insert_link_mapping(config_path_forward, p, dest);
+                        if (r == 0)
+                                r = q;
+                        q = insert_link_mapping(config_path_forward, de->d_name, dest);
+                        if (r == 0)
+                                r = q;
 
-                        /* Check if what the symlink points to
-                         * matches what we are looking for */
-                        if (path_is_absolute(name))
-                                found_dest = path_equal(dest, name);
-                        else
-                                found_dest = streq(basename(dest), name);
-
-                        if (found_path && found_dest) {
-                                _cleanup_free_ char *t = NULL;
-
-                                /* Filter out same name links in the main
-                                 * config path */
-                                t = path_make_absolute(name, config_path);
-                                if (!t)
-                                        return -ENOMEM;
-
-                                b = path_equal(t, p);
-                        }
-
-                        if (b)
-                                *same_name_link = true;
-                        else if (found_path || found_dest)
-                                return 1;
+                        /* Insert full path and base of the
+                         * symlink target as keys pointing to
+                         * the symlink's own full path */
+                        q = insert_link_mapping(config_path_reverse, dest, p);
+                        if (r == 0)
+                                r = q;
+                        q = insert_link_mapping(config_path_reverse, basename(dest), p);
+                        if (r == 0)
+                                r = q;
                 }
         }
+
+        return r;
+}
+
+static int find_symlinks_fd(
+                const char *name,
+                int fd,
+                const char *path,
+                const char *config_path,
+                bool *same_name_link,
+                EnabledContext *ec) {
+
+        int r = 0;
+        _cleanup_closedir_ DIR *d = NULL;
+        _cleanup_enabled_context_ EnabledContext *temp_ec = NULL;
+        char *symlink_path;
+        char *symlink_target_path;
+        Hashmap *config_path_forward;
+        Hashmap *config_path_reverse;
+        bool found_path, found_dest, b = false;
+
+        assert(name);
+        assert(fd >= 0);
+        assert(path);
+        assert(config_path);
+        assert(same_name_link);
+
+        /* If no ec is passed in, use a temporary one that auto-frees */
+        if (ec == NULL) {
+                ec = enabled_context_new();
+                if (ec == NULL)
+                        return -ENOMEM;
+                temp_ec = ec;
+        }
+
+        config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
+
+        /* If config_path_forward isn't cached, generate both directions */
+        if (config_path_forward == NULL) {
+                r = fill_enabled_context(fd, path, config_path, ec);
+                if (r < 0)
+                        return r;
+        } else {
+                safe_close(fd);
+        }
+
+        /* Refetch, may have been filled. */
+        config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
+        config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
+
+        /* Use the cache to perform a reverse lookup of symlink
+         * destinations to see if any one matches what we are looking
+         * for. Because both full and base names are keys, there is no
+         * need to check if "name" is a full path or base name. */
+        symlink_path = hashmap_get(config_path_reverse, name);
+        found_dest = (symlink_path != NULL);
+
+        /* Choose a strategy to determine if the unit's name matches the
+         * symlink's name. If the reverse lookup succeeded, we can skip
+         * the forward lookup. */
+        if (found_dest) {
+                if (path_is_absolute(name))
+                        found_path = path_equal(symlink_path, name);
+                else
+                        found_path = streq(basename(symlink_path), name);
+        } else {
+                symlink_target_path = hashmap_get(config_path_forward, name);
+                found_path = (symlink_target_path != NULL);
+        }
+
+        if (found_path && found_dest) {
+                _cleanup_free_ char *t = NULL;
+
+                /* Filter out same name links in the main config path */
+                t = path_make_absolute(name, config_path);
+                if (!t)
+                        return -ENOMEM;
+
+                b = path_equal(t, symlink_path);
+        }
+
+        if (b)
+                *same_name_link = true;
+        else if (found_path || found_dest)
+                return 1;
+
+        return 0;
 }
 
 static int find_symlinks(
                 const char *name,
                 const char *config_path,
-                bool *same_name_link) {
+                bool *same_name_link,
+                EnabledContext *ec) {
 
         int fd;
 
@@ -521,14 +699,15 @@ static int find_symlinks(
         }
 
         /* This takes possession of fd and closes it */
-        return find_symlinks_fd(name, fd, config_path, config_path, same_name_link);
+        return find_symlinks_fd(name, fd, config_path, config_path, same_name_link, ec);
 }
 
 static int find_symlinks_in_scope(
                 UnitFileScope scope,
                 const char *root_dir,
                 const char *name,
-                UnitFileState *state) {
+                UnitFileState *state,
+                EnabledContext *ec) {
 
         int r;
         _cleanup_free_ char *path = NULL;
@@ -544,7 +723,7 @@ static int find_symlinks_in_scope(
         if (r < 0)
                 return r;
 
-        r = find_symlinks(name, path, &same_name_link_runtime);
+        r = find_symlinks(name, path, &same_name_link_runtime, ec);
         if (r < 0)
                 return r;
         else if (r > 0) {
@@ -557,7 +736,7 @@ static int find_symlinks_in_scope(
         if (r < 0)
                 return r;
 
-        r = find_symlinks(name, path, &same_name_link);
+        r = find_symlinks(name, path, &same_name_link, ec);
         if (r < 0)
                 return r;
         else if (r > 0) {
@@ -1504,6 +1683,7 @@ int unit_file_add_dependency(
                 char *target,
                 UnitDependency dep,
                 bool force,
+                EnabledContext *ec,
                 UnitFileChange **changes,
                 unsigned *n_changes) {
 
@@ -1528,7 +1708,7 @@ int unit_file_add_dependency(
         STRV_FOREACH(i, files) {
                 UnitFileState state;
 
-                state = unit_file_get_state(scope, root_dir, *i);
+                state = unit_file_get_state(scope, root_dir, *i, ec);
                 if (state < 0) {
                         log_error("Failed to get unit file state for %s: %s", *i, strerror(-state));
                         return state;
@@ -1602,7 +1782,7 @@ int unit_file_enable(
         STRV_FOREACH(i, files) {
                 UnitFileState state;
 
-                state = unit_file_get_state(scope, root_dir, *i);
+                state = unit_file_get_state(scope, root_dir, *i, NULL);
                 if (state < 0) {
                         log_error("Failed to get unit file state for %s: %s", *i, strerror(-state));
                         return state;
@@ -1784,7 +1964,8 @@ int unit_file_get_default(
 UnitFileState unit_file_get_state(
                 UnitFileScope scope,
                 const char *root_dir,
-                const char *name) {
+                const char *name,
+                EnabledContext *ec) {
 
         _cleanup_lookup_paths_free_ LookupPaths paths = {};
         UnitFileState state = _UNIT_FILE_STATE_INVALID;
@@ -1847,7 +2028,7 @@ UnitFileState unit_file_get_state(
                         }
                 }
 
-                r = find_symlinks_in_scope(scope, root_dir, name, &state);
+                r = find_symlinks_in_scope(scope, root_dir, name, &state, ec);
                 if (r < 0)
                         return r;
                 else if (r > 0)
@@ -2130,7 +2311,8 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(UnitFileList*, unit_file_list_free_one);
 int unit_file_get_list(
                 UnitFileScope scope,
                 const char *root_dir,
-                Hashmap *h) {
+                Hashmap *h,
+                EnabledContext *ec) {
 
         _cleanup_lookup_paths_free_ LookupPaths paths = {};
         char **i;
@@ -2214,7 +2396,7 @@ int unit_file_get_list(
                                 goto found;
                         }
 
-                        r = find_symlinks_in_scope(scope, root_dir, de->d_name, &f->state);
+                        r = find_symlinks_in_scope(scope, root_dir, de->d_name, &f->state, ec);
                         if (r < 0)
                                 return r;
                         else if (r > 0) {
@@ -2246,7 +2428,10 @@ int unit_file_get_list(
                 }
         }
 
-        return r;
+        /* The 1 that hashmap_put in the "found" section returns on
+         * successful put can get here.  No valid error r value can
+         * get here. */
+        return 0;
 }
 
 static const char* const unit_file_state_table[_UNIT_FILE_STATE_MAX] = {
