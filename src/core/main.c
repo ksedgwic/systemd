@@ -272,6 +272,7 @@ static int parse_proc_cmdline_item(const char *key, const char *value) {
         static const char * const rlmap[] = {
                 "emergency", SPECIAL_EMERGENCY_TARGET,
                 "-b",        SPECIAL_EMERGENCY_TARGET,
+                "rescue",    SPECIAL_RESCUE_TARGET,
                 "single",    SPECIAL_RESCUE_TARGET,
                 "-s",        SPECIAL_RESCUE_TARGET,
                 "s",         SPECIAL_RESCUE_TARGET,
@@ -1856,7 +1857,7 @@ finish:
                         /* And switch root with MS_MOVE, because we remove the old directory afterwards and detach it. */
                         r = switch_root(switch_root_dir, "/mnt", true, MS_MOVE);
                         if (r < 0)
-                                log_error("Failed to switch root, ignoring: %s", strerror(-r));
+                                log_error("Failed to switch root, trying to continue: %s", strerror(-r));
                 }
 
                 args_size = MAX(6, argc+1);

@@ -22,6 +22,7 @@
 #include "sd-event.h"
 #include "sd-daemon.h"
 #include "mkdir.h"
+#include "label.h"
 #include "capability.h"
 
 #include "resolved-manager.h"
@@ -38,11 +39,17 @@ int main(int argc, char *argv[]) {
         log_parse_environment();
         log_open();
 
-        umask(0022);
-
         if (argc != 1) {
                 log_error("This program takes no arguments.");
                 r = -EINVAL;
+                goto finish;
+        }
+
+        umask(0022);
+
+        r = label_init(NULL);
+        if (r < 0) {
+                log_error("SELinux setup failed: %s", strerror(-r));
                 goto finish;
         }
 

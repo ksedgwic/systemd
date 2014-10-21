@@ -1,4 +1,5 @@
 Bugfixes:
+
 * Re-enable "fsck -l" when it is ready:
    https://bugs.freedesktop.org/show_bug.cgi?id=79576#c5
 
@@ -11,12 +12,18 @@ Bugfixes:
 * properly handle .mount unit state tracking when two mount points are stacked one on top of another on the exact same mount point.
 
 After killing 'systemd --user', systemctl restart user@... fails.
+/run/user/1000/systemd/notify has to be removed manually.
 
 ExecStart with unicode characters fails in strv_split_quoted:
 
           [Service]
           Environment=ONE='one' "TWO='two two' too" THREE=
           ExecStart=/bin/python3 -c 'import sys;print(sys.argv)' $ONE $TWO $THREE
+
+MEMORY return code is overloaded for syntax errors in the commandline.
+str_split_quoted() should return a real return code, so spawn_child can
+report the failure properly.
+
 
 External:
 * Fedora: add an rpmlint check that verifies that all unit files in the RPM are listed in %systemd_post macros.
@@ -33,6 +40,19 @@ External:
   compress coredumps in a way compatible with /usr/bin/lz4.
 
 Features:
+
+* PID 1 doesn't apply nspawns devices cgroup policy
+
+* rework journal-send.c to use memfds for large blobs if they are available instead of unlinked files in /tmp. Also, if we detect that the kernel knows memfds, refuse anything but sealed memfds.
+
+* maybe support a new very "soft" reboot mode, that simply kills all processes, disassembles everything, flushes /run and sysvipc, and then reexecs systemd again
+
+* man: document that corrupted journal files is nothing to act on
+
+* bus-proxy: when passing messages from kdbus, make sure we properly
+  handle the case where a large number of fds is appended that we
+  cannot pass into sendmsg() of the AF_UNIX sokcet (which only accepts
+  253 messages)
 
 * busctl: add a pcap writer, using LINKTYPE_DBUS/231
 
@@ -77,8 +97,6 @@ Features:
   complete.
 
 * merge ~/.local/share and ~/.local/lib into one similar /usr/lib and /usr/share....
-
-* remove readahead in 217
 
 * journald: allows specification of UID range for splitting up journal files
 
@@ -147,8 +165,6 @@ Features:
 * figure out a nice way how we can let the admin know what child/sibling unit causes cgroup membership for a specific unit
 
 * journalctl: add the ability to look for the most recent process of a binary. journalctl /usr/bin/X11 --pid=-1 or so...
-
-* set NOTIFY_SOCKET also for control processes
 
 * mount_cgroup_controllers(): symlinks need to get the label applied
 
@@ -461,7 +477,6 @@ Features:
   - "systemctl mask" should find all names by which a unit is accessible
     (i.e. by scanning for symlinks to it) and link them all to /dev/null
   - systemctl list-unit-files should list generated files (and probably with a new state "generated" for them, or so)
-  - systemctl: maybe add "systemctl add-wants" or so...
 
 * timer units:
   - timer units should get the ability to trigger when:

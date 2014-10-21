@@ -183,7 +183,6 @@ CC_CHECK_FLAGS_APPEND([with_cflags], [CFLAGS], [\
         -Wno-unused-parameter \
         -Wno-missing-field-initializers \
         -Wno-unused-result \
-        -Wno-typedef-redefinition \
         -Werror=overflow \
         -Wdate-time \
         -Wnested-externs \
@@ -198,6 +197,13 @@ CC_CHECK_FLAGS_APPEND([with_cflags], [CFLAGS], [\
         -fstack-protector-strong \
         -fPIE \
         --param=ssp-buffer-size=4])
+
+AS_CASE([$CC], [*clang*],
+        [CC_CHECK_FLAGS_APPEND([with_cppflags], [CPPFLAGS], [\
+               -Wno-typedef-redefinition \
+               -Wno-gnu-variable-sized-type-not-at-end \
+        ])])
+
 AS_CASE([$CFLAGS], [*-O[[12345\ ]]*],
         [CC_CHECK_FLAGS_APPEND([with_cflags], [CFLAGS], [\
                -flto -ffat-lto-objects])],
@@ -300,7 +306,6 @@ RT_LIBS="$LIBS"
 AC_SUBST(RT_LIBS)
 LIBS="$save_LIBS"
 
-AC_CHECK_FUNCS([fanotify_init fanotify_mark])
 AC_CHECK_FUNCS([memfd_create])
 AC_CHECK_FUNCS([__secure_getenv secure_getenv])
 AC_CHECK_DECLS([gettid, pivot_root, name_to_handle_at, setns, LO_FLAGS_PARTSCAN],

@@ -643,27 +643,57 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
                 return synthetic_reply_method_return(m, NULL);
 
         } else if (sd_bus_message_is_method_call(m, "org.freedesktop.DBus", "GetConnectionSELinuxSecurityContext")) {
+                const char *name;
                 _cleanup_bus_creds_unref_ sd_bus_creds *creds = NULL;
+                _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
 
-                r = get_creds_by_message(a, m, SD_BUS_CREDS_SELINUX_CONTEXT, &creds, NULL);
+                r = sd_bus_message_read(m, "s", &name);
+                if (r < 0)
+                        return r;
+
+                r = get_creds_by_name(a, name, SD_BUS_CREDS_SELINUX_CONTEXT, &creds, NULL);
+                if (r == -ESRCH || r == -ENXIO) {
+                        sd_bus_error_setf(&error, SD_BUS_ERROR_NAME_HAS_NO_OWNER, "Could not get security context of name '%s': no such name.", name);
+                        return synthetic_reply_method_errno(m, r, &error);
+                }
                 if (r < 0)
                         return synthetic_reply_method_errno(m, r, NULL);
 
                 return synthetic_reply_method_return(m, "y", creds->label, strlen(creds->label));
 
         } else if (sd_bus_message_is_method_call(m, "org.freedesktop.DBus", "GetConnectionUnixProcessID")) {
+                const char *name;
                 _cleanup_bus_creds_unref_ sd_bus_creds *creds = NULL;
+                _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
 
-                r = get_creds_by_message(a, m, SD_BUS_CREDS_PID, &creds, NULL);
+                r = sd_bus_message_read(m, "s", &name);
+                if (r < 0)
+                        return r;
+
+                r = get_creds_by_name(a, name, SD_BUS_CREDS_PID, &creds, NULL);
+                if (r == -ESRCH || r == -ENXIO) {
+                        sd_bus_error_setf(&error, SD_BUS_ERROR_NAME_HAS_NO_OWNER, "Could not get PID of name '%s': no such name.", name);
+                        return synthetic_reply_method_errno(m, r, &error);
+                }
                 if (r < 0)
                         return synthetic_reply_method_errno(m, r, NULL);
 
                 return synthetic_reply_method_return(m, "u", (uint32_t) creds->pid);
 
         } else if (sd_bus_message_is_method_call(m, "org.freedesktop.DBus", "GetConnectionUnixUser")) {
+                const char *name;
                 _cleanup_bus_creds_unref_ sd_bus_creds *creds = NULL;
+                _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
 
-                r = get_creds_by_message(a, m, SD_BUS_CREDS_UID, &creds, NULL);
+                r = sd_bus_message_read(m, "s", &name);
+                if (r < 0)
+                        return r;
+
+                r = get_creds_by_name(a, name, SD_BUS_CREDS_UID, &creds, NULL);
+                if (r == -ESRCH || r == -ENXIO) {
+                        sd_bus_error_setf(&error, SD_BUS_ERROR_NAME_HAS_NO_OWNER, "Could not get UID of name '%s': no such name.", name);
+                        return synthetic_reply_method_errno(m, r, &error);
+                }
                 if (r < 0)
                         return synthetic_reply_method_errno(m, r, NULL);
 
@@ -733,6 +763,7 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
                 struct kdbus_cmd_free cmd_free;
                 struct kdbus_cmd_name *name;
                 _cleanup_strv_free_ char **owners = NULL;
+                _cleanup_bus_error_free_ sd_bus_error error = SD_BUS_ERROR_NULL;
                 char *arg0;
                 int err = 0;
 
@@ -742,6 +773,14 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
 
                 if (!service_name_is_valid(arg0))
                         return synthetic_reply_method_errno(m, -EINVAL, NULL);
+
+                r = sd_bus_get_owner(a, arg0, 0, NULL);
+                if (r == -ESRCH || r == -ENXIO) {
+                        sd_bus_error_setf(&error, SD_BUS_ERROR_NAME_HAS_NO_OWNER, "Could not get owners of name '%s': no such name.", arg0);
+                        return synthetic_reply_method_errno(m, r, &error);
+                }
+                if (r < 0)
+                        return synthetic_reply_method_errno(m, r, NULL);
 
                 cmd.flags = KDBUS_NAME_LIST_QUEUED;
                 r = ioctl(a->input_fd, KDBUS_CMD_NAME_LIST, &cmd);
@@ -836,7 +875,7 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
 
         } else if (sd_bus_message_is_method_call(m, "org.freedesktop.DBus", "RequestName")) {
                 const char *name;
-                uint32_t flags;
+                uint32_t flags, param;
 
                 r = sd_bus_message_read(m, "su", &name, &flags);
                 if (r < 0)
@@ -847,7 +886,15 @@ static int process_driver(sd_bus *a, sd_bus *b, sd_bus_message *m) {
                 if ((flags & ~(BUS_NAME_ALLOW_REPLACEMENT|BUS_NAME_REPLACE_EXISTING|BUS_NAME_DO_NOT_QUEUE)) != 0)
                         return synthetic_reply_method_errno(m, -EINVAL, NULL);
 
-                r = sd_bus_request_name(a, name, flags);
+                param = 0;
+                if (flags & BUS_NAME_ALLOW_REPLACEMENT)
+                        param |= SD_BUS_NAME_ALLOW_REPLACEMENT;
+                if (flags & BUS_NAME_REPLACE_EXISTING)
+                        param |= SD_BUS_NAME_REPLACE_EXISTING;
+                if (!(flags & BUS_NAME_DO_NOT_QUEUE))
+                        param |= SD_BUS_NAME_QUEUE;
+
+                r = sd_bus_request_name(a, name, param);
                 if (r < 0) {
                         if (r == -EEXIST)
                                 return synthetic_reply_method_return(m, "u", BUS_NAME_EXISTS);
@@ -1152,11 +1199,7 @@ int main(int argc, char *argv[]) {
                         goto finish;
                 }
 
-                r = getpeersec(in_fd, &peersec);
-                if (r < 0) {
-                        log_error("Failed to get security creds: %s", strerror(-r));
-                        goto finish;
-                }
+                (void) getpeersec(in_fd, &peersec);
         }
 
         if (arg_drop_privileges) {
