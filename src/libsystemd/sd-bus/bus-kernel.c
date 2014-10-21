@@ -714,7 +714,7 @@ int bus_kernel_take_fd(sd_bus *b) {
 
         hello = alloca0_align(sz, 8);
         hello->size = sz;
-        hello->conn_flags = b->hello_flags;
+        hello->flags = b->hello_flags;
         hello->attach_flags = b->attach_flags;
         hello->pool_size = KDBUS_POOL_SIZE;
 
@@ -751,10 +751,9 @@ int bus_kernel_take_fd(sd_bus *b) {
                 }
         }
 
-        /* The higher 32bit of both flags fields are considered
+        /* The higher 32bit of the bus_flags fields are considered
          * 'incompatible flags'. Refuse them all for now. */
-        if (hello->bus_flags > 0xFFFFFFFFULL ||
-            hello->conn_flags > 0xFFFFFFFFULL)
+        if (hello->bus_flags > 0xFFFFFFFFULL)
                 return -ENOTSUP;
 
         if (!bloom_validate_parameters((size_t) hello->bloom.size, (unsigned) hello->bloom.n_hash))
@@ -770,7 +769,7 @@ int bus_kernel_take_fd(sd_bus *b) {
 
         b->is_kernel = true;
         b->bus_client = true;
-        b->can_fds = !!(hello->conn_flags & KDBUS_HELLO_ACCEPT_FD);
+        b->can_fds = !!(hello->flags & KDBUS_HELLO_ACCEPT_FD);
         b->message_version = 2;
         b->message_endian = BUS_NATIVE_ENDIAN;
 
@@ -1230,8 +1229,11 @@ int kdbus_translate_attach_flags(uint64_t mask, uint64_t *kdbus_mask) {
         if (mask & (SD_BUS_CREDS_UID|SD_BUS_CREDS_GID|SD_BUS_CREDS_PID|SD_BUS_CREDS_PID_STARTTIME|SD_BUS_CREDS_TID))
                 m |= KDBUS_ATTACH_CREDS;
 
-        if (mask & (SD_BUS_CREDS_COMM|SD_BUS_CREDS_TID_COMM))
-                m |= KDBUS_ATTACH_COMM;
+        if (mask & SD_BUS_CREDS_COMM)
+                m |= KDBUS_ATTACH_PID_COMM;
+
+        if (mask & SD_BUS_CREDS_TID_COMM)
+                m |= KDBUS_ATTACH_TID_COMM;
 
         if (mask & SD_BUS_CREDS_EXE)
                 m |= KDBUS_ATTACH_EXE;
@@ -1305,13 +1307,6 @@ int bus_kernel_create_bus(const char *name, bool world, char **s) {
         if (ioctl(fd, KDBUS_CMD_BUS_MAKE, make) < 0) {
                 safe_close(fd);
                 return -errno;
-        }
-
-        /* The features field are considered 'incompatible flags'.
-         * Refuse them all for now. */
-        if (make->features) {
-                safe_close(fd);
-                return -ENOTSUP;
         }
 
         if (s) {
@@ -1444,13 +1439,6 @@ int bus_kernel_create_endpoint(const char *bus_name, const char *ep_name, char *
                 return -errno;
         }
 
-        /* The features field are considered 'incompatible flags'.
-         * Refuse them all for now. */
-        if (make->features) {
-                safe_close(fd);
-                return -ENOTSUP;
-        }
-
         if (ep_path) {
                 char *p;
 
@@ -1565,7 +1553,7 @@ int bus_kernel_make_starter(
         }
 
         hello->size = size;
-        hello->conn_flags =
+        hello->flags =
                 (activating ? KDBUS_HELLO_ACTIVATOR : KDBUS_HELLO_POLICY_HOLDER) |
                 (accept_fd ? KDBUS_HELLO_ACCEPT_FD : 0);
         hello->pool_size = KDBUS_POOL_SIZE;
@@ -1574,11 +1562,9 @@ int bus_kernel_make_starter(
         if (ioctl(fd, KDBUS_CMD_HELLO, hello) < 0)
                 return -errno;
 
-        /* The higher 32bit of both flags fields are considered
+        /* The higher 32bit of the bus_flags fields are considered
          * 'incompatible flags'. Refuse them all for now. */
-        if (hello->features ||
-            hello->bus_flags > 0xFFFFFFFFULL ||
-            hello->conn_flags > 0xFFFFFFFFULL)
+        if (hello->bus_flags > 0xFFFFFFFFULL)
                 return -ENOTSUP;
 
         if (!bloom_validate_parameters((size_t) hello->bloom.size, (unsigned) hello->bloom.n_hash))
