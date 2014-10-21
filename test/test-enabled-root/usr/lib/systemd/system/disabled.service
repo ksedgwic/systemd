@@ -1,0 +1,9 @@
+[Unit]
+Description=Disabled Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/echo "Disabled Service Start"
+
+[Install]
+WantedBy=some.target
