@@ -410,6 +410,9 @@ void enabled_context_free(EnabledContext *ec) {
         char *key;
         Hashmap *h;
 
+        if (!ec)
+                return;
+
         while ((key = hashmap_first_key(ec->config_paths_forward))) {
                 h = hashmap_steal_first(ec->config_paths_forward);
                 hashmap_free_free_free(h);
@@ -433,9 +436,19 @@ static int insert_link_mapping(Hashmap *h, const char * key, const char *val) {
         int r = 0;
         char *keycpy, *valcpy;
 
+        assert(h);
+        assert(key);
+        assert(val);
+
         /* Make copies of the key and value */
         keycpy = strdup(key);
+        if (!keycpy)
+                return -ENOMEM;
         valcpy = strdup(val);
+        if (!valcpy) {
+                free(keycpy);
+                return -ENOMEM;
+        }
 
         r = hashmap_put(h, keycpy, valcpy);
         if (r == 1) {
@@ -460,6 +473,11 @@ static int fill_enabled_context(
         _cleanup_closedir_ DIR *d = NULL;
         Hashmap *config_path_forward;
         Hashmap *config_path_reverse;
+
+        assert(fd >= 0);
+        assert(path);
+        assert(config_path);
+        assert(ec);
 
         config_path_forward = hashmap_get(ec->config_paths_forward, config_path);
         config_path_reverse = hashmap_get(ec->config_paths_reverse, config_path);
