@@ -1306,7 +1306,8 @@ manual_tests += \
 	test-install \
 	test-watchdog \
 	test-log \
-	test-ipcrm
+	test-ipcrm \
+	test-manyunits
 
 if HAVE_KMOD
 manual_tests += \
@@ -1814,6 +1815,16 @@ test_enabled_SOURCES = \
 	src/test/test-enabled.c
 
 test_enabled_LDADD = \
+	libsystemd-units.la \
+	libsystemd-label.la \
+	libsystemd-shared.la \
+	libsystemd-internal.la
+
+test_manyunits_SOURCES = \
+	src/test/test-manyunits.c
+
+test_manyunits_LDADD = \
+	libsystemd-core.la \
 	libsystemd-units.la \
 	libsystemd-label.la \
 	libsystemd-shared.la \
