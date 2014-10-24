@@ -1361,7 +1361,8 @@ tests += \
 	test-condition-util \
 	test-uid-range \
 	test-bus-policy \
-	test-enabled
+	test-enabled \
+	$(NULL)
 
 EXTRA_DIST += \
 	test/a.service \
@@ -1426,7 +1427,8 @@ EXTRA_DIST += \
 	test/test-enabled-root/etc/systemd/system/some.target.wants/different.service \
 	test/test-enabled-root/etc/systemd/system/some.target.wants/aliased.service \
 	test/test-enabled-root/etc/systemd/system/maskedstatic.service \
-	test/test-enabled-root/etc/systemd/system/some.target
+	test/test-enabled-root/etc/systemd/system/some.target \
+	$(NULL)
 
 EXTRA_DIST += \
 	src/test/test-helper.h

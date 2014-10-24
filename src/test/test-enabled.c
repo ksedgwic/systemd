@@ -87,35 +87,39 @@ static void test_enabled(int argc, char* argv[], EnabledContext *ec) {
 
         root_dir = strappenda(TEST_DIR, "/test-enabled-root");
 
-        /* Explicitly check each of the units. */
-        confirm_unit_state("nonexistent.service",	-ENOENT);
-        confirm_unit_state("invalid.service", 		-EBADMSG);
-        confirm_unit_state("disabled.service", 		UNIT_FILE_DISABLED);
-        confirm_unit_state("another.service", 		UNIT_FILE_ENABLED);
-        confirm_unit_state("runtime.service", 		UNIT_FILE_ENABLED_RUNTIME);
-        confirm_unit_state("masked.service", 		UNIT_FILE_MASKED);
-        confirm_unit_state("maskedruntime.service",	UNIT_FILE_MASKED_RUNTIME);
-        confirm_unit_state("static.service", 		UNIT_FILE_STATIC);
-        confirm_unit_state("maskedstatic.service",	UNIT_FILE_MASKED);
+        confirm_unit_state("nonexistent.service", -ENOENT);
+        confirm_unit_state("invalid.service", -EBADMSG);
+        confirm_unit_state("disabled.service", UNIT_FILE_DISABLED);
+        confirm_unit_state("another.service", UNIT_FILE_ENABLED);
+        confirm_unit_state("runtime.service", UNIT_FILE_ENABLED_RUNTIME);
+        confirm_unit_state("masked.service", UNIT_FILE_MASKED);
+        confirm_unit_state("maskedruntime.service", UNIT_FILE_MASKED_RUNTIME);
+        confirm_unit_state("static.service", UNIT_FILE_STATIC);
+        confirm_unit_state("maskedstatic.service", UNIT_FILE_MASKED);
         confirm_unit_state("maskedruntimestatic.service", UNIT_FILE_MASKED_RUNTIME);
-        confirm_unit_state("templating@.service",	UNIT_FILE_ENABLED);
-        confirm_unit_state("templating@two.service",	UNIT_FILE_ENABLED);
-        confirm_unit_state("templating@three.service",	UNIT_FILE_ENABLED);
-        confirm_unit_state("unique.service", 		UNIT_FILE_ENABLED);
+        confirm_unit_state("templating@.service", UNIT_FILE_ENABLED);
+        confirm_unit_state("templating@two.service", UNIT_FILE_ENABLED);
+        confirm_unit_state("templating@three.service", UNIT_FILE_ENABLED);
+        confirm_unit_state("unique.service", UNIT_FILE_ENABLED);
 
         /* Reconcile unit_file_get_list with the return for each unit. */
         h = hashmap_new(&string_hash_ops);
+        assert_se(h);
+
         r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h, ec);
-        assert_se(r == 0);
+        assert_se(r >= 0);
+
         HASHMAP_FOREACH(p, h, i) {
                 UnitFileState s;
 
-                s = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir,
-                                        basename(p->path), ec);
+                s = unit_file_get_state(UNIT_FILE_SYSTEM, root_dir, basename(p->path), ec);
 
-                /* unit_file_get_list and unit_file_get_state are
-                 * a little different in some cases.  Handle these
-                 * cases here ...
+                /* The return values from unit_file_get_list and
+                 * unit_file_get_state are a little different in some
+                 * cases.  Handle these cases here ...
+                 *
+                 * Need to cast s to int because -EBADMSG is not in
+                 * UnitFileState ...
                  */
                 switch ((int)s) {
                 case UNIT_FILE_ENABLED_RUNTIME:
