@@ -49,25 +49,20 @@ dual_timestamp* dual_timestamp_from_realtime(dual_timestamp *ts, usec_t u) {
         int64_t delta;
         assert(ts);
 
-        if (u == USEC_INFINITY) {
-                ts->realtime = ts->monotonic = USEC_INFINITY;
+        if (u == USEC_INFINITY || u <= 0) {
+                ts->realtime = ts->monotonic = u;
                 return ts;
         }
 
         ts->realtime = u;
 
-        if (u == 0)
+        delta = (int64_t) now(CLOCK_REALTIME) - (int64_t) u;
+        ts->monotonic = now(CLOCK_MONOTONIC);
+
+        if ((int64_t) ts->monotonic > delta)
+                ts->monotonic -= delta;
+        else
                 ts->monotonic = 0;
-        else {
-                delta = (int64_t) now(CLOCK_REALTIME) - (int64_t) u;
-
-                ts->monotonic = now(CLOCK_MONOTONIC);
-
-                if ((int64_t) ts->monotonic > delta)
-                        ts->monotonic -= delta;
-                else
-                        ts->monotonic = 0;
-        }
 
         return ts;
 }
@@ -219,11 +214,10 @@ char *format_timestamp_relative(char *buf, size_t l, usec_t t) {
         const char *s;
         usec_t n, d;
 
-        n = now(CLOCK_REALTIME);
-
-        if (t <= 0 || (t == USEC_INFINITY))
+        if (t <= 0 || t == USEC_INFINITY)
                 return NULL;
 
+        n = now(CLOCK_REALTIME);
         if (n > t) {
                 d = n - t;
                 s = "ago";
@@ -302,8 +296,14 @@ char *format_timespan(char *buf, size_t l, usec_t t, usec_t accuracy) {
         assert(buf);
         assert(l > 0);
 
-        if (t == USEC_INFINITY || t <= 0) {
-                strncpy(p, t == USEC_INFINITY ? "infinity" : "0", l);
+        if (t == USEC_INFINITY) {
+                strncpy(p, "infinity", l-1);
+                p[l-1] = 0;
+                return p;
+        }
+
+        if (t <= 0) {
+                strncpy(p, "0", l-1);
                 p[l-1] = 0;
                 return p;
         }
@@ -773,7 +773,7 @@ int parse_nsec(const char *t, nsec_t *nsec) {
                 { "", 1ULL }, /* default is nsec */
         };
 
-        const char *p;
+        const char *p, *s;
         nsec_t r = 0;
         bool something = false;
 
@@ -781,6 +781,18 @@ int parse_nsec(const char *t, nsec_t *nsec) {
         assert(nsec);
 
         p = t;
+
+        p += strspn(p, WHITESPACE);
+        s = startswith(p, "infinity");
+        if (s) {
+                s += strspn(s, WHITESPACE);
+                if (!*s != 0)
+                        return -EINVAL;
+
+                *nsec = NSEC_INFINITY;
+                return 0;
+        }
+
         for (;;) {
                 long long l, z = 0;
                 char *e;

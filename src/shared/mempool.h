@@ -5,7 +5,8 @@
 /***
   This file is part of systemd.
 
-  Copyright 2010 Lennart Poettering
+  Copyright 2011-2014 Lennart Poettering
+  Copyright 2014 Michal Schmidt
 
   systemd is free software; you can redistribute it and/or modify it
   under the terms of the GNU Lesser General Public License as published by
@@ -21,10 +22,27 @@
   along with systemd; If not, see <http://www.gnu.org/licenses/>.
 ***/
 
-#include "selinux-util.h"
-#include "smack-util.h"
+#include <stddef.h>
 
-int label_fix(const char *path, bool ignore_enoent, bool ignore_erofs);
+struct pool;
 
-int mkdir_label(const char *path, mode_t mode);
-int symlink_label(const char *old_path, const char *new_path);
+struct mempool {
+        struct pool *first_pool;
+        void *freelist;
+        size_t tile_size;
+        unsigned at_least;
+};
+
+void* mempool_alloc_tile(struct mempool *mp);
+void mempool_free_tile(struct mempool *mp, void *p);
+
+#define DEFINE_MEMPOOL(pool_name, tile_type, alloc_at_least) \
+struct mempool pool_name = { \
+        .tile_size = sizeof(tile_type), \
+        .at_least = alloc_at_least, \
+}
+
+
+#ifdef VALGRIND
+void mempool_drop(struct mempool *mp);
+#endif
