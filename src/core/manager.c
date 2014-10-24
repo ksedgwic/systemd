@@ -2424,6 +2424,12 @@ int manager_reload(Manager *m) {
 
         assert(m);
 
+        if (m->enabled)
+                enabled_context_free(m->enabled);
+        m->enabled = enabled_context_new();
+        if (!m->enabled)
+                return -ENOMEM;
+
         r = manager_open_serialization(m, &f);
         if (r < 0)
                 return r;
