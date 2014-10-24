@@ -384,7 +384,8 @@ enum kdbus_payload_type {
  * @timeout_ns:		The time to wait for a message reply from the peer.
  *			If there is no reply, a kernel-generated message
  *			with an attached KDBUS_ITEM_REPLY_TIMEOUT item
- *			is sent to @src_id.
+ *			is sent to @src_id. The timeout is expected in
+ *			nanoseconds and as absolute CLOCK_MONOTONIC value.
  * @cookie_reply:	A reply to the requesting message with the same
  *			cookie. The requesting connection can match its
  *			request and the reply with this value
@@ -720,7 +721,7 @@ struct kdbus_name_list {
 };
 
 /**
- * struct kdbus_cmd_conn_info - struct used for KDBUS_CMD_CONN_INFO ioctl
+ * struct kdbus_cmd_info - struct used for KDBUS_CMD_CONN_INFO ioctl
  * @size:		The total size of the struct
  * @flags:		KDBUS_ATTACH_* flags, userspace → kernel
  * @kernel_flags:	Supported KDBUS_ATTACH_* flags, kernel → userspace
@@ -728,16 +729,16 @@ struct kdbus_name_list {
  *			@name is required. kdbus will look up the name to
  *			determine the ID in this case.
  * @offset:		Returned offset in the caller's pool buffer where the
- *			kdbus_conn_info struct result is stored. The user must
+ *			kdbus_info struct result is stored. The user must
  *			use KDBUS_CMD_FREE to free the allocated memory.
  * @name:		The optional well-known name to look up. Only needed in
  *			case @id is zero.
  *
  * On success, the KDBUS_CMD_CONN_INFO ioctl will return 0 and @offset will
  * tell the user the offset in the connection pool buffer at which to find the
- * result in a struct kdbus_conn_info.
+ * result in a struct kdbus_info.
  */
-struct kdbus_cmd_conn_info {
+struct kdbus_cmd_info {
 	__u64 size;
 	__u64 flags;
 	__u64 kernel_flags;
@@ -747,7 +748,7 @@ struct kdbus_cmd_conn_info {
 } __attribute__((aligned(8)));
 
 /**
- * struct kdbus_conn_info - information returned by KDBUS_CMD_CONN_INFO
+ * struct kdbus_info - information returned by KDBUS_CMD_CONN_INFO
  * @size:		The total size of the struct
  * @id:			The connection's 64-bit ID
  * @flags:		The connection's flags
@@ -756,7 +757,7 @@ struct kdbus_cmd_conn_info {
  * Note that the user is responsible for freeing the allocated memory with
  * the KDBUS_CMD_FREE ioctl.
  */
-struct kdbus_conn_info {
+struct kdbus_info {
 	__u64 size;
 	__u64 id;
 	__u64 flags;
@@ -855,6 +856,8 @@ struct kdbus_cmd_match {
  * @KDBUS_CMD_CONN_UPDATE:	Update the properties of a connection. Used to
  *				update the metadata subscription mask and
  *				policy.
+ * @KDBUS_CMD_BUS_CREATOR_INFO:	Retrieve information of the creator of the bus
+ *				a connection is attached to.
  * @KDBUS_CMD_ENDPOINT_UPDATE:	Update the properties of a custom enpoint. Used
  *				to update the policy.
  * @KDBUS_CMD_MATCH_ADD:	Install a match which broadcast messages should
@@ -890,9 +893,11 @@ enum kdbus_ioctl_type {
 					      struct kdbus_cmd_name_list),
 
 	KDBUS_CMD_CONN_INFO =		_IOWR(KDBUS_IOCTL_MAGIC, 0x60,
-					      struct kdbus_cmd_conn_info),
+					      struct kdbus_cmd_info),
 	KDBUS_CMD_CONN_UPDATE =		_IOW(KDBUS_IOCTL_MAGIC, 0x61,
 					     struct kdbus_cmd_update),
+	KDBUS_CMD_BUS_CREATOR_INFO =	_IOWR(KDBUS_IOCTL_MAGIC, 0x62,
+					      struct kdbus_cmd_info),
 
 	KDBUS_CMD_ENDPOINT_UPDATE =	_IOW(KDBUS_IOCTL_MAGIC, 0x71,
 					     struct kdbus_cmd_update),

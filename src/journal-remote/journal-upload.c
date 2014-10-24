@@ -31,12 +31,14 @@
 #include "util.h"
 #include "build.h"
 #include "fileio.h"
+#include "mkdir.h"
 #include "conf-parser.h"
 #include "journal-upload.h"
 
 #define PRIV_KEY_FILE CERTIFICATE_ROOT "/private/journal-upload.pem"
 #define CERT_FILE     CERTIFICATE_ROOT "/certs/journal-upload.pem"
 #define TRUST_FILE    CERTIFICATE_ROOT "/ca/trusted.pem"
+#define DEFAULT_PORT  19532
 
 static const char* arg_url;
 
@@ -61,7 +63,7 @@ static const char *arg_save_state = NULL;
 #define STATE_FILE "/var/lib/systemd/journal-upload/state"
 
 #define easy_setopt(curl, opt, value, level, cmd)                       \
-        {                                                               \
+        do {                                                            \
                 code = curl_easy_setopt(curl, opt, value);              \
                 if (code) {                                             \
                         log_full(level,                                 \
@@ -69,7 +71,7 @@ static const char *arg_save_state = NULL;
                                   curl_easy_strerror(code));            \
                         cmd;                                            \
                 }                                                       \
-        }
+        } while(0)
 
 static size_t output_callback(char *buf,
                               size_t size,
@@ -90,6 +92,32 @@ static size_t output_callback(char *buf,
         }
 
         return size * nmemb;
+}
+
+static int check_cursor_updating(Uploader *u) {
+        _cleanup_free_ char *temp_path = NULL;
+        _cleanup_fclose_ FILE *f = NULL;
+        int r;
+
+        if (!u->state_file)
+                return 0;
+
+        r = mkdir_parents(u->state_file, 0755);
+        if (r < 0) {
+                log_error("Cannot create parent directory of state file %s: %s",
+                          u->state_file, strerror(-r));
+                return r;
+        }
+
+        r = fopen_temporary(u->state_file, &f, &temp_path);
+        if (r < 0) {
+                log_error("Cannot save state to %s: %s",
+                          u->state_file, strerror(-r));
+                return r;
+        }
+        unlink(temp_path);
+
+        return 0;
 }
 
 static int update_cursor_state(Uploader *u) {
@@ -134,11 +162,14 @@ static int load_cursor_state(Uploader *u) {
                            "LAST_CURSOR",  &u->last_cursor,
                            NULL);
 
-        if (r < 0 && r != -ENOENT) {
+        if (r == -ENOENT)
+                log_debug("State file %s is not present.", u->state_file);
+        else if (r < 0) {
                 log_error("Failed to read state file %s: %s",
                           u->state_file, strerror(-r));
                 return r;
-        }
+        } else
+                log_debug("Last cursor was %s", u->last_cursor);
 
         return 0;
 }
@@ -220,15 +251,16 @@ int start_upload(Uploader *u,
                             LOG_WARNING, );
 
                 if (arg_key || startswith(u->url, "https://")) {
-                        assert(arg_cert);
-
                         easy_setopt(curl, CURLOPT_SSLKEY, arg_key ?: PRIV_KEY_FILE,
                                     LOG_ERR, return -EXFULL);
                         easy_setopt(curl, CURLOPT_SSLCERT, arg_cert ?: CERT_FILE,
                                     LOG_ERR, return -EXFULL);
                 }
 
-                if (arg_trust || startswith(u->url, "https://"))
+                if (streq_ptr(arg_trust, "all"))
+                        easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0,
+                                    LOG_ERR, return -EUCLEAN);
+                else if (arg_trust || startswith(u->url, "https://"))
                         easy_setopt(curl, CURLOPT_CAINFO, arg_trust ?: TRUST_FILE,
                                     LOG_ERR, return -EXFULL);
 
@@ -394,6 +426,7 @@ static int setup_signals(Uploader *u) {
 
 static int setup_uploader(Uploader *u, const char *url, const char *state_file) {
         int r;
+        const char *host, *proto = "";
 
         assert(u);
         assert(url);
@@ -401,10 +434,24 @@ static int setup_uploader(Uploader *u, const char *url, const char *state_file) 
         memzero(u, sizeof(Uploader));
         u->input = -1;
 
-        if (!startswith(url, "http://") && !startswith(url, "https://"))
-                url = strappenda("https://", url);
+        if (!(host = startswith(url, "http://")) && !(host = startswith(url, "https://"))) {
+                host = url;
+                proto = "https://";
+        }
 
-        u->url = strappend(url, "/upload");
+        if (strchr(host, ':'))
+                u->url = strjoin(proto, url, "/upload", NULL);
+        else {
+                char *t;
+                size_t x;
+
+                t = strdupa(url);
+                x = strlen(t);
+                while (x > 0 && t[x - 1] == '/')
+                        t[x - 1] = '\0';
+
+                u->url = strjoin(proto, t, ":" STRINGIFY(DEFAULT_PORT), "/upload", NULL);
+        }
         if (!u->url)
                 return log_oom();
 
@@ -455,10 +502,12 @@ static int perform_upload(Uploader *u) {
 
         code = curl_easy_perform(u->easy);
         if (code) {
-                log_error("Upload to %s failed: %.*s",
-                          u->url,
-                          u->error[0] ? (int) sizeof(u->error) : INT_MAX,
-                          u->error[0] ? u->error : curl_easy_strerror(code));
+                if (u->error[0])
+                        log_error("Upload to %s failed: %.*s",
+                                  u->url, (int) sizeof(u->error), u->error);
+                else
+                        log_error("Upload to %s failed: %s",
+                                  u->url, curl_easy_strerror(code));
                 return -EIO;
         }
 
@@ -507,10 +556,14 @@ static void help(void) {
                "Upload journal events to a remote server.\n\n"
                "  -h --help                 Show this help\n"
                "     --version              Show package version\n"
-               "  -u --url=URL              Upload to this address\n"
-               "     --key=FILENAME         Specify key in PEM format\n"
-               "     --cert=FILENAME        Specify certificate in PEM format\n"
-               "     --trust=FILENAME       Specify CA certificate in PEM format\n"
+               "  -u --url=URL              Upload to this address (default port "
+                                            STRINGIFY(DEFAULT_PORT) ")\n"
+               "     --key=FILENAME         Specify key in PEM format (default:\n"
+               "                            \"" PRIV_KEY_FILE "\")\n"
+               "     --cert=FILENAME        Specify certificate in PEM format (default:\n"
+               "                            \"" CERT_FILE "\")\n"
+               "     --trust=FILENAME|all   Specify CA certificate or disable checking (default:\n"
+               "                            \"" TRUST_FILE "\")\n"
                "     --system               Use the system journal\n"
                "     --user                 Use the user journal for the current user\n"
                "  -m --merge                Use  all available journals\n"
@@ -761,6 +814,10 @@ int main(int argc, char **argv) {
 
         sd_event_set_watchdog(u.events, true);
 
+        r = check_cursor_updating(&u);
+        if (r < 0)
+                goto cleanup;
+
         log_debug("%s running as pid "PID_FMT,
                   program_invocation_short_name, getpid());
 
@@ -783,6 +840,12 @@ int main(int argc, char **argv) {
                   "STATUS=Processing input...");
 
         while (true) {
+                r = sd_event_get_state(u.events);
+                if (r < 0)
+                        break;
+                if (r == SD_EVENT_FINISHED)
+                        break;
+
                 if (use_journal) {
                         if (!u.journal)
                                 break;
@@ -797,12 +860,6 @@ int main(int argc, char **argv) {
                 }
                 if (r < 0)
                         goto cleanup;
-
-                r = sd_event_get_state(u.events);
-                if (r < 0)
-                        break;
-                if (r == SD_EVENT_FINISHED)
-                        break;
 
                 if (u.uploading) {
                         r = perform_upload(&u);
@@ -825,5 +882,5 @@ cleanup:
         destroy_uploader(&u);
 
 finish:
-        return r == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+        return r >= 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

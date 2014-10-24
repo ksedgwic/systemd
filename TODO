@@ -1,7 +1,14 @@
-Bugfixes:
+Fixes needed before 217:
 
-* Re-enable "fsck -l" when it is ready:
-   https://bugs.freedesktop.org/show_bug.cgi?id=79576#c5
+* sd_session_get_desktop() yells at me?
+
+* change startup timeout to not cover the full bootup, but only sysinit part (see below)
+
+* remove Discard= in .mount units and replace it by Options=, to prepare for later swapon fix
+
+* verify that both resolved and timesyncd work OK without networkd around
+
+Bugfixes:
 
 * Should systemctl status \* work on all unit types, not just .service?
 
@@ -11,19 +18,15 @@ Bugfixes:
 
 * properly handle .mount unit state tracking when two mount points are stacked one on top of another on the exact same mount point.
 
-After killing 'systemd --user', systemctl restart user@... fails.
-/run/user/1000/systemd/notify has to be removed manually.
-
-ExecStart with unicode characters fails in strv_split_quoted:
+* ExecStart with unicode characters fails in strv_split_quoted:
 
           [Service]
           Environment=ONE='one' "TWO='two two' too" THREE=
           ExecStart=/bin/python3 -c 'import sys;print(sys.argv)' $ONE $TWO $THREE
 
-MEMORY return code is overloaded for syntax errors in the commandline.
-str_split_quoted() should return a real return code, so spawn_child can
-report the failure properly.
-
+* MEMORY return code is overloaded for syntax errors in the commandline.
+  str_split_quoted() should return a real return code, so spawn_child can
+  report the failure properly.
 
 External:
 * Fedora: add an rpmlint check that verifies that all unit files in the RPM are listed in %systemd_post macros.
@@ -40,6 +43,29 @@ External:
   compress coredumps in a way compatible with /usr/bin/lz4.
 
 Features:
+
+* journald: allow per-priority and per-service retention times when rotating/vacuuming
+
+* introduce systemd-timesync-wait.service or so to sync on an NTP fix?
+
+* systemd --user should issue sd_notify() upon reaching basic.target, not on becoming idle
+
+* configure.ac pretends dbus was optional but actually hardcodes use of dbus' pkg-config file to determine various dbus dirs such as policy and activation dirs
+
+* consider showing the unit names during boot up in the status output, not just the unit descriptions
+
+* send SIGABRT when a service watchdog is triggered, by default, so that we acquire a backtrace of the hang.
+
+* shouldn't RouteMetric= in networkd's [DHCP] section move to [Network]?
+
+* dhcp: do we allow configuring dhcp routes on interfaces that are not the one we got the dhcp info from?
+
+* maybe allow timer units with an empty Units= setting, so that they
+  can be used for resuming the system but nothing else.
+
+* what to do about udev db binary stability for apps?
+
+* add a system-wide shutdown timeout, similar to the startup timeout we already have (see fdo bz #84110)
 
 * maybe provide an API to allow migration of foreign PIDs into existing scopes.
 
@@ -124,6 +150,8 @@ Features:
     to clients. It should also pass on its own timezone information.
   - provide a way to define a per-network interface default metric value
     for all routes to it. possibly a second default for DHCP routes.
+  - allow Name= to be specified repeatedly in the [Match] section. Maybe also
+    support Name=foo*|bar*|baz ?
 
 * resolved:
   - put networkd events and rtnl events at a higher priority, so that
