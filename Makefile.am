@@ -1309,7 +1309,8 @@ manual_tests += \
 	test-watchdog \
 	test-log \
 	test-ipcrm \
-	test-manyunits
+	test-manyunits \
+	$(NULL)
 
 if HAVE_KMOD
 manual_tests += \

@@ -25,13 +25,12 @@
 #include <string.h>
 #include <sys/param.h>
 #include <unistd.h>
-#include <time.h>
 
 #include "manager.h"
 #include "macro.h"
 #include "util.h"
 
-static const int NUNITS = 3000;
+#define NUNITS 3000
 
 static const char *root_dir;
 
@@ -45,24 +44,27 @@ static const char *root_dir;
                 }                                                       \
         } while (false)                                                 \
 
-static const char *many_path(int unitnum) {
-        static char path[PATH_MAX];
-        snprintf(path, PATH_MAX, "%s/%s/many-%06d.service",
-                 root_dir, "usr/lib/systemd/system", unitnum);
+static char *many_path(int unitnum) {
+        int r;
+        char *path;
+        r = asprintf(&path, "%s/%s/many-%06d.service", root_dir, "usr/lib/systemd/system", unitnum);
+        assert_se(r >= 0);
         return path;
 }
 
-static const char *link_path(int unitnum) {
-        static char path[PATH_MAX];
-        snprintf(path, PATH_MAX, "%s/%s/many-%06d.service",
-                 root_dir, "etc/systemd/system/some.target.wants", unitnum);
+static char *link_path(int unitnum) {
+        int r;
+        char *path;
+        r = asprintf(&path, "%s/%s/many-%06d.service", root_dir, "etc/systemd/system/some.target.wants", unitnum);
+        assert_se(r >= 0);
         return path;
 }
 
-static const char *another_path(void) {
-        static char path[PATH_MAX];
-        snprintf(path, PATH_MAX, "%s/%s/another.service",
-                 root_dir, "usr/lib/systemd/system");
+static char *another_path(void) {
+        int r;
+        char *path;
+        r = asprintf(&path, "%s/%s/another.service", root_dir, "usr/lib/systemd/system");
+        assert_se(r >= 0);
         return path;
 }
 
@@ -73,51 +75,61 @@ static void cleanup_manyunits(void) {
         fprintf(stderr, "removing %d unit files\n", NUNITS);
 
         for (unitnum = 0; unitnum < NUNITS; ++unitnum) {
-                unlink(link_path(unitnum));
-                unlink(many_path(unitnum));
+                _cleanup_free_ char *lpath = NULL;
+                _cleanup_free_ char *mpath = NULL;
+                lpath = link_path(unitnum);
+                mpath = many_path(unitnum);
+                unlink(lpath);
+                unlink(mpath);
         }
 }
 
 static void setup_manyunits(void) {
         int unitnum;
-        const char *another;
+        _cleanup_free_ char *apath = NULL;
 
-        another = another_path();
+        apath = another_path();
 
         fprintf(stderr, "creating %d unit files\n", NUNITS);
 
         for (unitnum = 0; unitnum < NUNITS; ++unitnum) {
-                assert_se_cleanup(link(another, many_path(unitnum)) == 0);
-                assert_se_cleanup(symlink(many_path(unitnum),
-                                          link_path(unitnum)) == 0);
+                _cleanup_free_ char *lpath = NULL;
+                _cleanup_free_ char *mpath = NULL;
+                lpath = link_path(unitnum);
+                mpath = many_path(unitnum);
+                assert_se_cleanup(link(apath, mpath) == 0);
+                assert_se_cleanup(symlink(mpath, lpath) == 0);
         }
 }
 
 static void test_manyunits(void) {
-        time_t t0, t1;
+        usec_t t0, t1;
         int r = 0;
         int count = 0;
         Hashmap *h;
         UnitFileList *p;
         Iterator i;
 
-        fprintf(stderr, "testing with %d unit files\n", NUNITS);
+        log_info("testing with %d unit files\n", NUNITS);
 
-        t0 = time(NULL);
+        t0 = now(CLOCK_MONOTONIC);
         h = hashmap_new(&string_hash_ops);
+        assert_se_cleanup(h);
         r = unit_file_get_list(UNIT_FILE_SYSTEM, root_dir, h);
         assert_se_cleanup(r >= 0);
-        HASHMAP_FOREACH(p, h, i) {
+        HASHMAP_FOREACH(p, h, i)
                 ++count;
-        }
-        fprintf(stderr, "saw %d units\n", count);
+        log_info("saw %d units\n", count);
         assert_se_cleanup(count == 3015);
-        t1 = time(NULL);
+        t1 = now(CLOCK_MONOTONIC);
 
-        fprintf(stderr, "unit_file_get_list took %ld seconds\n",
-                (long) (t1 - t0));
+        log_info("unit_file_get_list took %f seconds\n", (t1 - t0) / 1e6);
 
-        assert_se_cleanup(t1 - t0 < 10);
+        /* dangerous should these tests run on some overworked build
+         * system host.
+         *
+         * assert_se_cleanup(t1 - t0 < (10 * 1e6));
+         */
 }
 
 int main(int argc, char* argv[]) {
