@@ -392,70 +392,16 @@ _public_ int sd_bus_list_names(sd_bus *bus, char ***acquired, char ***activatabl
                 return bus_list_names_dbus1(bus, acquired, activatable);
 }
 
-static int bus_get_owner_kdbus(
-                sd_bus *bus,
-                const char *name,
-                uint64_t mask,
-                sd_bus_creds **creds) {
+static int bus_populate_creds_from_items(sd_bus *bus,
+                                         struct kdbus_info *info,
+                                         uint64_t mask,
+                                         sd_bus_creds *c) {
 
-        _cleanup_bus_creds_unref_ sd_bus_creds *c = NULL;
-        struct kdbus_cmd_conn_info *cmd;
-        struct kdbus_conn_info *conn_info;
         struct kdbus_item *item;
-        size_t size, l;
-        uint64_t m, id;
+        uint64_t m;
         int r;
 
-        r = bus_kernel_parse_unique_name(name, &id);
-        if (r < 0)
-                return r;
-        if (r > 0) {
-                size = offsetof(struct kdbus_cmd_conn_info, items);
-                cmd = alloca0_align(size, 8);
-                cmd->id = id;
-        } else {
-                l = strlen(name) + 1;
-                size = offsetof(struct kdbus_cmd_conn_info, items) + KDBUS_ITEM_SIZE(l);
-                cmd = alloca0_align(size, 8);
-                cmd->items[0].size = KDBUS_ITEM_HEADER_SIZE + l;
-                cmd->items[0].type = KDBUS_ITEM_NAME;
-                memcpy(cmd->items[0].str, name, l);
-        }
-
-        cmd->size = size;
-        kdbus_translate_attach_flags(mask, (uint64_t*) &cmd->flags);
-
-        r = ioctl(bus->input_fd, KDBUS_CMD_CONN_INFO, cmd);
-        if (r < 0)
-                return -errno;
-
-        conn_info = (struct kdbus_conn_info *) ((uint8_t *) bus->kdbus_buffer + cmd->offset);
-
-        /* Non-activated names are considered not available */
-        if (conn_info->flags & KDBUS_HELLO_ACTIVATOR) {
-                if (name[0] == ':')
-                        r = -ENXIO;
-                else
-                        r = -ESRCH;
-                goto fail;
-        }
-
-        c = bus_creds_new();
-        if (!c) {
-                r = -ENOMEM;
-                goto fail;
-        }
-
-        if (mask & SD_BUS_CREDS_UNIQUE_NAME) {
-                if (asprintf(&c->unique_name, ":1.%llu", (unsigned long long) conn_info->id) < 0) {
-                        r = -ENOMEM;
-                        goto fail;
-                }
-
-                c->mask |= SD_BUS_CREDS_UNIQUE_NAME;
-        }
-
-        KDBUS_ITEM_FOREACH(item, conn_info, items) {
+        KDBUS_ITEM_FOREACH(item, info, items) {
 
                 switch (item->type) {
 
@@ -484,10 +430,8 @@ static int bus_get_owner_kdbus(
                 case KDBUS_ITEM_PID_COMM:
                         if (mask & SD_BUS_CREDS_COMM) {
                                 c->comm = strdup(item->str);
-                                if (!c->comm) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->comm)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_COMM;
                         }
@@ -496,10 +440,8 @@ static int bus_get_owner_kdbus(
                 case KDBUS_ITEM_TID_COMM:
                         if (mask & SD_BUS_CREDS_TID_COMM) {
                                 c->tid_comm = strdup(item->str);
-                                if (!c->tid_comm) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->tid_comm)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_TID_COMM;
                         }
@@ -508,10 +450,8 @@ static int bus_get_owner_kdbus(
                 case KDBUS_ITEM_EXE:
                         if (mask & SD_BUS_CREDS_EXE) {
                                 c->exe = strdup(item->str);
-                                if (!c->exe) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->exe)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_EXE;
                         }
@@ -521,10 +461,8 @@ static int bus_get_owner_kdbus(
                         if (mask & SD_BUS_CREDS_CMDLINE) {
                                 c->cmdline_size = item->size - KDBUS_ITEM_HEADER_SIZE;
                                 c->cmdline = memdup(item->data, c->cmdline_size);
-                                if (!c->cmdline) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->cmdline)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_CMDLINE;
                         }
@@ -537,20 +475,16 @@ static int bus_get_owner_kdbus(
 
                         if (m) {
                                 c->cgroup = strdup(item->str);
-                                if (!c->cgroup) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->cgroup)
+                                        return -ENOMEM;
 
                                 r = bus_get_root_path(bus);
                                 if (r < 0)
-                                        goto fail;
+                                        return r;
 
                                 c->cgroup_root = strdup(bus->cgroup_root);
-                                if (!c->cgroup_root) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->cgroup_root)
+                                        return -ENOMEM;
 
                                 c->mask |= m;
                         }
@@ -563,10 +497,8 @@ static int bus_get_owner_kdbus(
                         if (m) {
                                 c->capability_size = item->size - KDBUS_ITEM_HEADER_SIZE;
                                 c->capability = memdup(item->data, c->capability_size);
-                                if (!c->capability) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->capability)
+                                        return -ENOMEM;
 
                                 c->mask |= m;
                         }
@@ -575,10 +507,8 @@ static int bus_get_owner_kdbus(
                 case KDBUS_ITEM_SECLABEL:
                         if (mask & SD_BUS_CREDS_SELINUX_CONTEXT) {
                                 c->label = strdup(item->str);
-                                if (!c->label) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->label)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_SELINUX_CONTEXT;
                         }
@@ -598,7 +528,7 @@ static int bus_get_owner_kdbus(
                         if ((mask & SD_BUS_CREDS_WELL_KNOWN_NAMES) && service_name_is_valid(item->name.name)) {
                                 r = strv_extend(&c->well_known_names, item->name.name);
                                 if (r < 0)
-                                        goto fail;
+                                        return r;
 
                                 c->mask |= SD_BUS_CREDS_WELL_KNOWN_NAMES;
                         }
@@ -607,16 +537,83 @@ static int bus_get_owner_kdbus(
                 case KDBUS_ITEM_CONN_NAME:
                         if ((mask & SD_BUS_CREDS_CONNECTION_NAME)) {
                                 c->conn_name = strdup(item->str);
-                                if (!c->conn_name) {
-                                        r = -ENOMEM;
-                                        goto fail;
-                                }
+                                if (!c->conn_name)
+                                        return -ENOMEM;
 
                                 c->mask |= SD_BUS_CREDS_CONNECTION_NAME;
                         }
                         break;
                 }
         }
+
+        return 0;
+}
+
+static int bus_get_name_creds_kdbus(
+                sd_bus *bus,
+                const char *name,
+                uint64_t mask,
+                sd_bus_creds **creds) {
+
+        _cleanup_bus_creds_unref_ sd_bus_creds *c = NULL;
+        struct kdbus_cmd_info *cmd;
+        struct kdbus_info *conn_info;
+        size_t size, l;
+        uint64_t id;
+        int r;
+
+        r = bus_kernel_parse_unique_name(name, &id);
+        if (r < 0)
+                return r;
+        if (r > 0) {
+                size = offsetof(struct kdbus_cmd_info, items);
+                cmd = alloca0_align(size, 8);
+                cmd->id = id;
+        } else {
+                l = strlen(name) + 1;
+                size = offsetof(struct kdbus_cmd_info, items) + KDBUS_ITEM_SIZE(l);
+                cmd = alloca0_align(size, 8);
+                cmd->items[0].size = KDBUS_ITEM_HEADER_SIZE + l;
+                cmd->items[0].type = KDBUS_ITEM_NAME;
+                memcpy(cmd->items[0].str, name, l);
+        }
+
+        cmd->size = size;
+        kdbus_translate_attach_flags(mask, (uint64_t*) &cmd->flags);
+
+        r = ioctl(bus->input_fd, KDBUS_CMD_CONN_INFO, cmd);
+        if (r < 0)
+                return -errno;
+
+        conn_info = (struct kdbus_info *) ((uint8_t *) bus->kdbus_buffer + cmd->offset);
+
+        /* Non-activated names are considered not available */
+        if (conn_info->flags & KDBUS_HELLO_ACTIVATOR) {
+                if (name[0] == ':')
+                        r = -ENXIO;
+                else
+                        r = -ESRCH;
+                goto fail;
+        }
+
+        c = bus_creds_new();
+        if (!c) {
+                r = -ENOMEM;
+                goto fail;
+        }
+
+        if (mask & SD_BUS_CREDS_UNIQUE_NAME) {
+                if (asprintf(&c->unique_name, ":1.%llu", (unsigned long long) conn_info->id) < 0) {
+                        r = -ENOMEM;
+                        goto fail;
+                }
+
+                c->mask |= SD_BUS_CREDS_UNIQUE_NAME;
+        }
+
+        r = bus_populate_creds_from_items(bus, conn_info, mask, c);
+        if (r < 0)
+                goto fail;
 
         if (creds) {
                 *creds = c;
@@ -630,7 +627,7 @@ fail:
         return r;
 }
 
-static int bus_get_owner_dbus1(
+static int bus_get_name_creds_dbus1(
                 sd_bus *bus,
                 const char *name,
                 uint64_t mask,
@@ -776,7 +773,7 @@ static int bus_get_owner_dbus1(
         return 0;
 }
 
-_public_ int sd_bus_get_owner(
+_public_ int sd_bus_get_name_creds(
                 sd_bus *bus,
                 const char *name,
                 uint64_t mask,
@@ -794,9 +791,72 @@ _public_ int sd_bus_get_owner(
                 return -ENOTCONN;
 
         if (bus->is_kernel)
-                return bus_get_owner_kdbus(bus, name, mask, creds);
+                return bus_get_name_creds_kdbus(bus, name, mask, creds);
         else
-                return bus_get_owner_dbus1(bus, name, mask, creds);
+                return bus_get_name_creds_dbus1(bus, name, mask, creds);
+}
+
+_public_ int sd_bus_get_owner_creds(sd_bus *bus, uint64_t mask, sd_bus_creds **ret) {
+        _cleanup_bus_creds_unref_ sd_bus_creds *c = NULL;
+        pid_t pid = 0;
+        int r;
+
+        assert_return(bus, -EINVAL);
+        assert_return(mask <= _SD_BUS_CREDS_ALL, -ENOTSUP);
+        assert_return(ret, -EINVAL);
+        assert_return(!bus_pid_changed(bus), -ECHILD);
+
+        if (!BUS_IS_OPEN(bus->state))
+                return -ENOTCONN;
+
+        if (!bus->ucred_valid && !isempty(bus->label))
+                return -ENODATA;
+
+        c = bus_creds_new();
+        if (!c)
+                return -ENOMEM;
+
+        if (bus->ucred_valid) {
+                pid = c->pid = bus->ucred.pid;
+                c->uid = bus->ucred.uid;
+                c->gid = bus->ucred.gid;
+
+                c->mask |= (SD_BUS_CREDS_UID | SD_BUS_CREDS_PID | SD_BUS_CREDS_GID) & mask;
+        }
+
+        if (!isempty(bus->label) && (mask & SD_BUS_CREDS_SELINUX_CONTEXT)) {
+                c->label = strdup(bus->label);
+                if (!c->label)
+                        return -ENOMEM;
+
+                c->mask |= SD_BUS_CREDS_SELINUX_CONTEXT;
+        }
+
+        if (bus->is_kernel) {
+                struct kdbus_cmd_info cmd = {};
+                struct kdbus_info *creator_info;
+
+                cmd.size = sizeof(cmd);
+                r = ioctl(bus->input_fd, KDBUS_CMD_BUS_CREATOR_INFO, &cmd);
+                if (r < 0)
+                        return -errno;
+
+                creator_info = (struct kdbus_info *) ((uint8_t *) bus->kdbus_buffer + cmd.offset);
+
+                r = bus_populate_creds_from_items(bus, creator_info, mask, c);
+                kernel_cmd_free(bus, cmd.offset);
+
+                if (r < 0)
+                        return r;
+        } else {
+                r = bus_creds_add_more(c, mask, pid, 0);
+                if (r < 0)
+                        return r;
+        }
+
+        *ret = c;
+        c = NULL;
+        return 0;
 }
 
 static int add_name_change_match(sd_bus *bus,
@@ -1248,7 +1308,7 @@ int bus_remove_match_internal(
                 return bus_remove_match_internal_dbus1(bus, match);
 }
 
-_public_ int sd_bus_get_owner_machine_id(sd_bus *bus, const char *name, sd_id128_t *machine) {
+_public_ int sd_bus_get_name_machine_id(sd_bus *bus, const char *name, sd_id128_t *machine) {
         _cleanup_bus_message_unref_ sd_bus_message *reply = NULL, *m = NULL;
         const char *mid;
         int r;

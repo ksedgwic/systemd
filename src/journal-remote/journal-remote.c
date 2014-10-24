@@ -398,6 +398,12 @@ static int add_source(RemoteServer *s, int fd, char* name, bool own_name) {
                 goto error;
         }
 
+        r = sd_event_source_set_name(source->event, name);
+        if (r < 0) {
+                log_error("Failed to set source name for fd:%d: %s", fd, strerror(-r));
+                goto error;
+        }
+
         return 1; /* work to do */
 
  error:
@@ -407,15 +413,24 @@ static int add_source(RemoteServer *s, int fd, char* name, bool own_name) {
 
 static int add_raw_socket(RemoteServer *s, int fd) {
         int r;
+        _cleanup_close_ int fd_ = fd;
+        char name[strlen("raw-socket-") + DECIMAL_STR_MAX(int)];
+
+        assert(fd >= 0);
 
         r = sd_event_add_io(s->events, &s->listen_event,
                             fd, EPOLLIN,
                             dispatch_raw_connection_event, s);
-        if (r < 0) {
-                close(fd);
+        if (r < 0)
                 return r;
-        }
 
+        snprintf(name, sizeof(name), "raw-socket-%d", fd);
+
+        r = sd_event_source_set_name(s->listen_event, name);
+        if (r < 0)
+                return r;
+
+        fd_ = -1;
         s->active ++;
         return 0;
 }
@@ -434,33 +449,32 @@ static int setup_raw_socket(RemoteServer *s, const char *address) {
  **********************************************************************
  **********************************************************************/
 
-static RemoteSource *request_meta(void **connection_cls, int fd, char *hostname) {
+static int request_meta(void **connection_cls, int fd, char *hostname) {
         RemoteSource *source;
         Writer *writer;
         int r;
 
         assert(connection_cls);
         if (*connection_cls)
-                return *connection_cls;
+                return 0;
 
         r = get_writer(server, hostname, &writer);
         if (r < 0) {
                 log_warning("Failed to get writer for source %s: %s",
                             hostname, strerror(-r));
-                return NULL;
+                return r;
         }
 
         source = source_new(fd, true, hostname, writer);
         if (!source) {
-                log_oom();
                 writer_unref(writer);
-                return NULL;
+                return log_oom();
         }
 
         log_debug("Added RemoteSource as connection metadata %p", source);
 
         *connection_cls = source;
-        return source;
+        return 0;
 }
 
 static void request_meta_free(void *cls,
@@ -472,9 +486,11 @@ static void request_meta_free(void *cls,
         assert(connection_cls);
         s = *connection_cls;
 
-        log_debug("Cleaning up connection metadata %p", s);
-        source_free(s);
-        *connection_cls = NULL;
+        if (s) {
+                log_debug("Cleaning up connection metadata %p", s);
+                source_free(s);
+                *connection_cls = NULL;
+        }
 }
 
 static int process_http_upload(
@@ -489,11 +505,11 @@ static int process_http_upload(
 
         assert(source);
 
-        log_debug("request_handler_upload: connection %p, %zu bytes",
-                  connection, *upload_data_size);
+        log_trace("%s: connection %p, %zu bytes",
+                  __func__, connection, *upload_data_size);
 
         if (*upload_data_size) {
-                log_debug("Received %zu bytes", *upload_data_size);
+                log_trace("Received %zu bytes", *upload_data_size);
 
                 r = push_data(source, upload_data, *upload_data_size);
                 if (r < 0)
@@ -556,7 +572,7 @@ static int request_handler(
         assert(url);
         assert(method);
 
-        log_debug("Handling a connection %s %s %s", method, url, version);
+        log_trace("Handling a connection %s %s %s", method, url, version);
 
         if (*connection_cls)
                 return process_http_upload(connection,
@@ -607,8 +623,13 @@ static int request_handler(
 
         assert(hostname);
 
-        if (!request_meta(connection_cls, fd, hostname))
+        r = request_meta(connection_cls, fd, hostname);
+        if (r == -ENOMEM)
                 return respond_oom(connection);
+        else if (r < 0)
+                return mhd_respond(connection, MHD_HTTP_INTERNAL_SERVER_ERROR,
+                                   strerror(-r));
+
         hostname = NULL;
         return MHD_YES;
 }
@@ -703,6 +724,12 @@ static int setup_microhttpd_server(RemoteServer *s,
                 goto error;
         }
 
+        r = sd_event_source_set_name(d->event, "epoll-fd");
+        if (r < 0) {
+                log_error("Failed to set source name: %s", strerror(-r));
+                goto error;
+        }
+
         r = hashmap_ensure_allocated(&s->daemons, &uint64_hash_ops);
         if (r < 0) {
                 log_oom();
@@ -762,19 +789,6 @@ static int dispatch_http_event(sd_event_source *event,
  **********************************************************************
  **********************************************************************/
 
-static int dispatch_sigterm(sd_event_source *event,
-                            const struct signalfd_siginfo *si,
-                            void *userdata) {
-        RemoteServer *s = userdata;
-
-        assert(s);
-
-        log_received_signal(LOG_INFO, si);
-
-        sd_event_exit(s->events, 0);
-        return 0;
-}
-
 static int setup_signals(RemoteServer *s) {
         sigset_t mask;
         int r;
@@ -785,27 +799,38 @@ static int setup_signals(RemoteServer *s) {
         sigset_add_many(&mask, SIGINT, SIGTERM, -1);
         assert_se(sigprocmask(SIG_SETMASK, &mask, NULL) == 0);
 
-        r = sd_event_add_signal(s->events, &s->sigterm_event, SIGTERM, dispatch_sigterm, s);
+        r = sd_event_add_signal(s->events, &s->sigterm_event, SIGTERM, NULL, s);
         if (r < 0)
                 return r;
 
-        r = sd_event_add_signal(s->events, &s->sigint_event, SIGINT, dispatch_sigterm, s);
+        r = sd_event_source_set_name(s->sigterm_event, "sigterm");
+        if (r < 0)
+                return r;
+
+        r = sd_event_add_signal(s->events, &s->sigint_event, SIGINT, NULL, s);
+        if (r < 0)
+                return r;
+
+        r = sd_event_source_set_name(s->sigint_event, "sigint");
         if (r < 0)
                 return r;
 
         return 0;
 }
 
-static int fd_fd(const char *spec) {
+static int negative_fd(const char *spec) {
+        /* Return a non-positive number as its inverse, -EINVAL otherwise. */
+
         int fd, r;
 
         r = safe_atoi(spec, &fd);
         if (r < 0)
                 return r;
-        if (fd < 0)
-                return -EINVAL;
 
-        return fd;
+        if (fd > 0)
+                return -EINVAL;
+        else
+                return -fd;
 }
 
 static int remoteserver_init(RemoteServer *s,
@@ -851,7 +876,7 @@ static int remoteserver_init(RemoteServer *s,
         }
 
         for (fd = SD_LISTEN_FDS_START; fd < SD_LISTEN_FDS_START + n; fd++) {
-                if (sd_is_socket(fd, AF_UNSPEC, 0, false)) {
+                if (sd_is_socket(fd, AF_UNSPEC, 0, true)) {
                         log_info("Received a listening socket (fd:%d)", fd);
 
                         if (fd == http_socket)
@@ -860,7 +885,7 @@ static int remoteserver_init(RemoteServer *s,
                                 r = setup_microhttpd_server(s, fd, key, cert, trust);
                         else
                                 r = add_raw_socket(s, fd);
-                } else if (sd_is_socket(fd, AF_UNSPEC, 0, true)) {
+                } else if (sd_is_socket(fd, AF_UNSPEC, 0, false)) {
                         char *hostname;
 
                         r = getnameinfo_pretty(fd, &hostname);
@@ -1147,24 +1172,25 @@ static int parse_config(void) {
 static void help(void) {
         printf("%s [OPTIONS...] {FILE|-}...\n\n"
                "Write external journal events to journal file(s).\n\n"
-               "  -h --help               Show this help\n"
-               "     --version            Show package version\n"
-               "     --url=URL            Read events from systemd-journal-gatewayd at URL\n"
-               "     --getter=COMMAND     Read events from the output of COMMAND\n"
-               "     --listen-raw=ADDR    Listen for connections at ADDR\n"
-               "     --listen-http=ADDR   Listen for HTTP connections at ADDR\n"
-               "     --listen-https=ADDR  Listen for HTTPS connections at ADDR\n"
-               "  -o --output=FILE|DIR Write output to FILE or DIR/external-*.journal\n"
-               "     --compress[=BOOL]    Use XZ-compression in the output journal (default: yes)\n"
-               "     --seal[=BOOL]        Use Event sealing in the output journal (default: no)\n"
-               "     --key=FILENAME       Specify key in PEM format (default:\n"
-               "                          \"" PRIV_KEY_FILE "\")\n"
-               "     --cert=FILENAME      Specify certificate in PEM format (default:\n"
-               "                          \"" CERT_FILE "\")\n"
-               "     --trust=FILENAME|all Specify CA certificate or disable checking (default:\n"
-               "                          \"" TRUST_FILE "\")\n"
+               "  -h --help                 Show this help\n"
+               "     --version              Show package version\n"
+               "     --url=URL              Read events from systemd-journal-gatewayd at URL\n"
+               "     --getter=COMMAND       Read events from the output of COMMAND\n"
+               "     --listen-raw=ADDR      Listen for connections at ADDR\n"
+               "     --listen-http=ADDR     Listen for HTTP connections at ADDR\n"
+               "     --listen-https=ADDR    Listen for HTTPS connections at ADDR\n"
+               "  -o --output=FILE|DIR      Write output to FILE or DIR/external-*.journal\n"
+               "     --compress[=BOOL]      XZ-compress the output journal (default: yes)\n"
+               "     --seal[=BOOL]          Use event sealing (default: no)\n"
+               "     --key=FILENAME         SSL key in PEM format (default:\n"
+               "                            \"" PRIV_KEY_FILE "\")\n"
+               "     --cert=FILENAME        SSL certificate in PEM format (default:\n"
+               "                            \"" CERT_FILE "\")\n"
+               "     --trust=FILENAME|all   SSL CA certificate or disable checking (default:\n"
+               "                            \"" TRUST_FILE "\")\n"
                "     --gnutls-log=CATEGORY...\n"
-               "                          Specify a list of gnutls logging categories\n"
+               "                            Specify a list of gnutls logging categories\n"
+               "     --split-mode=none|host How many output files to create\n"
                "\n"
                "Note: file descriptors from sd_listen_fds() will be consumed, too.\n"
                , program_invocation_short_name);
@@ -1256,7 +1282,7 @@ static int parse_argv(int argc, char *argv[]) {
                                 return -EINVAL;
                         }
 
-                        r = fd_fd(optarg);
+                        r = negative_fd(optarg);
                         if (r >= 0)
                                 http_socket = r;
                         else
@@ -1269,7 +1295,7 @@ static int parse_argv(int argc, char *argv[]) {
                                 return -EINVAL;
                         }
 
-                        r = fd_fd(optarg);
+                        r = negative_fd(optarg);
                         if (r >= 0)
                                 https_socket = r;
                         else
@@ -1522,7 +1548,11 @@ int main(int argc, char **argv) {
         if (remoteserver_init(&s, key, cert, trust) < 0)
                 return EXIT_FAILURE;
 
-        sd_event_set_watchdog(s.events, true);
+        r = sd_event_set_watchdog(s.events, true);
+        if (r < 0)
+                log_error("Failed to enable watchdog: %s", strerror(-r));
+        else
+                log_debug("Watchdog is %s.", r > 0 ? "enabled" : "disabled");
 
         log_debug("%s running as pid "PID_FMT,
                   program_invocation_short_name, getpid());
