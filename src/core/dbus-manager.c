@@ -1100,6 +1100,52 @@ static int method_reload(sd_bus *bus, sd_bus_message *message, void *userdata, s
         return 1;
 }
 
+static int method_reload_if_needed(sd_bus *bus, sd_bus_message *message, void *userdata, sd_bus_error *error) {
+        Manager *m = userdata;
+        int r;
+        usec_t requested_time;
+
+        assert(bus);
+        assert(message);
+        assert(m);
+
+        r = bus_verify_reload_daemon_async(m, message, error);
+        if (r < 0)
+                return r;
+        if (r == 0)
+                return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
+
+        r = mac_selinux_access_check(message, "reload", error);
+        if (r < 0)
+                return r;
+
+        r = sd_bus_message_read(message, "t", &requested_time);
+        if (r < 0)
+                return r;
+
+        /* Is this reload needed?  If a completed reload was started
+         * after this reload was requested we can coalesce it and
+         * return immediate success. */
+
+        if (requested_time < m->last_reload_time)
+                return sd_bus_reply_method_return(message, NULL);
+
+        /* Instead of sending the reply back right away, we just
+         * remember that we need to and then send it after the reload
+         * is finished. That way the caller knows when the reload
+         * finished. */
+
+        assert(!m->queued_message);
+        r = sd_bus_message_new_method_return(message, &m->queued_message);
+        if (r < 0)
+                return r;
+
+        m->queued_message_bus = sd_bus_ref(bus);
+        m->exit_code = MANAGER_RELOAD;
+
+        return 1;
+}
+
 static int method_reexecute(sd_bus *bus, sd_bus_message *message, void *userdata, sd_bus_error *error) {
         Manager *m = userdata;
         int r;
@@ -1917,6 +1963,7 @@ const sd_bus_vtable bus_manager_vtable[] = {
         SD_BUS_METHOD("CreateSnapshot", "sb", "o", method_create_snapshot, 0),
         SD_BUS_METHOD("RemoveSnapshot", "s", NULL, method_remove_snapshot, 0),
         SD_BUS_METHOD("Reload", NULL, NULL, method_reload, SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD("ReloadIfNeeded", "t", NULL, method_reload_if_needed, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("Reexecute", NULL, NULL, method_reexecute, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("Exit", NULL, NULL, method_exit, 0),
         SD_BUS_METHOD("Reboot", NULL, NULL, method_reboot, SD_BUS_VTABLE_CAPABILITY(CAP_SYS_BOOT)),

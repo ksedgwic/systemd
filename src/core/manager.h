@@ -293,6 +293,9 @@ struct Manager {
 
         /* Used for processing polkit authorization responses */
         Hashmap *polkit_registry;
+
+        /* Used to coalesce redundant reloads */
+        usec_t last_reload_time;
 };
 
 int manager_new(SystemdRunningAs running_as, bool test_run, Manager **m);

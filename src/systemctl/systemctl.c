@@ -4778,6 +4778,7 @@ static int daemon_reload(sd_bus *bus, char **args) {
                         streq(args[0], "reboot")        ? "Reboot" :
                         streq(args[0], "kexec")         ? "KExec" :
                         streq(args[0], "exit")          ? "Exit" :
+                        streq(args[0], "daemon-reload-if-needed") ? "ReloadIfNeeded" :
                                     /* "daemon-reload" */ "Reload";
         }
 
@@ -4790,6 +4791,12 @@ static int daemon_reload(sd_bus *bus, char **args) {
                         method);
         if (r < 0)
                 return bus_log_create_error(r);
+
+        if (streq(method, "ReloadIfNeeded")) {
+                r = sd_bus_message_append(m, "t", now(CLOCK_MONOTONIC));
+                if (r < 0)
+                        return bus_log_create_error(r);
+        }
 
         r = sd_bus_message_set_allow_interactive_authorization(m, arg_ask_password);
         if (r < 0)
@@ -5755,6 +5762,7 @@ static void systemctl_help(void) {
                "  import-environment NAME...      Import all, one or more environment variables\n\n"
                "Manager Lifecycle Commands:\n"
                "  daemon-reload                   Reload systemd manager configuration\n"
+               "  daemon-reload-if-needed         Reload systemd manager configuration, skip if up-to-date\n"
                "  daemon-reexec                   Reexecute systemd manager\n\n"
                "System Commands:\n"
                "  is-system-running               Check whether system is fully running\n"
@@ -6716,6 +6724,7 @@ static int systemctl_main(sd_bus *bus, int argc, char *argv[], int bus_error) {
                 { "snapshot",              LESS,  2, snapshot          },
                 { "delete",                MORE,  2, delete_snapshot   },
                 { "daemon-reload",         EQUAL, 1, daemon_reload     },
+                { "daemon-reload-if-needed", EQUAL, 1, daemon_reload     },
                 { "daemon-reexec",         EQUAL, 1, daemon_reload     },
                 { "show-environment",      EQUAL, 1, show_environment  },
                 { "set-environment",       MORE,  2, set_environment   },
