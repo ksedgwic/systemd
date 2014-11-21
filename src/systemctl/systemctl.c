@@ -139,6 +139,8 @@ static bool arg_plain = false;
 
 static bool original_stdout_is_tty;
 
+static bool legacy_daemon_reload = false;
+
 static int daemon_reload(sd_bus *bus, char **args);
 static int halt_now(enum action a);
 static int check_one_unit(sd_bus *bus, const char *name, const char *good_states, bool quiet);
@@ -4778,9 +4780,11 @@ static int daemon_reload(sd_bus *bus, char **args) {
                         streq(args[0], "reboot")        ? "Reboot" :
                         streq(args[0], "kexec")         ? "KExec" :
                         streq(args[0], "exit")          ? "Exit" :
-                        streq(args[0], "daemon-reload-if-needed") ? "ReloadIfNeeded" :
                                     /* "daemon-reload" */ "Reload";
         }
+
+        if (streq(method, "Reload") && !legacy_daemon_reload)
+                method = "ReloadTimestamped";
 
         r = sd_bus_message_new_method_call(
                         bus,
@@ -4792,7 +4796,7 @@ static int daemon_reload(sd_bus *bus, char **args) {
         if (r < 0)
                 return bus_log_create_error(r);
 
-        if (streq(method, "ReloadIfNeeded")) {
+        if (streq(method, "ReloadTimestamped")) {
                 r = sd_bus_message_append(m, "t", now(CLOCK_MONOTONIC));
                 if (r < 0)
                         return bus_log_create_error(r);
@@ -4803,7 +4807,13 @@ static int daemon_reload(sd_bus *bus, char **args) {
                 return bus_log_create_error(r);
 
         r = sd_bus_call(bus, m, 0, &error, NULL);
-        if (r == -ENOENT && arg_action != ACTION_SYSTEMCTL)
+        if (r == -EBADR && streq(method, "ReloadTimestamped") && streq(error.name, SD_BUS_ERROR_UNKNOWN_METHOD)) {
+                /* The ReloadTimestamped method wasn't available, retry
+                 * with legacy Reload instead. */
+                legacy_daemon_reload = true;
+                return daemon_reload(bus, args);
+        }
+        else if (r == -ENOENT && arg_action != ACTION_SYSTEMCTL)
                 /* There's always a fallback possible for
                  * legacy actions. */
                 r = -EADDRNOTAVAIL;
@@ -5762,7 +5772,6 @@ static void systemctl_help(void) {
                "  import-environment NAME...      Import all, one or more environment variables\n\n"
                "Manager Lifecycle Commands:\n"
                "  daemon-reload                   Reload systemd manager configuration\n"
-               "  daemon-reload-if-needed         Reload systemd manager configuration, skip if up-to-date\n"
                "  daemon-reexec                   Reexecute systemd manager\n\n"
                "System Commands:\n"
                "  is-system-running               Check whether system is fully running\n"
@@ -6724,7 +6733,6 @@ static int systemctl_main(sd_bus *bus, int argc, char *argv[], int bus_error) {
                 { "snapshot",              LESS,  2, snapshot          },
                 { "delete",                MORE,  2, delete_snapshot   },
                 { "daemon-reload",         EQUAL, 1, daemon_reload     },
-                { "daemon-reload-if-needed", EQUAL, 1, daemon_reload     },
                 { "daemon-reexec",         EQUAL, 1, daemon_reload     },
                 { "show-environment",      EQUAL, 1, show_environment  },
                 { "set-environment",       MORE,  2, set_environment   },

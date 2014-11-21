@@ -1100,7 +1100,7 @@ static int method_reload(sd_bus *bus, sd_bus_message *message, void *userdata, s
         return 1;
 }
 
-static int method_reload_if_needed(sd_bus *bus, sd_bus_message *message, void *userdata, sd_bus_error *error) {
+static int method_reload_timestamped(sd_bus *bus, sd_bus_message *message, void *userdata, sd_bus_error *error) {
         Manager *m = userdata;
         int r;
         usec_t requested_time;
@@ -1963,7 +1963,7 @@ const sd_bus_vtable bus_manager_vtable[] = {
         SD_BUS_METHOD("CreateSnapshot", "sb", "o", method_create_snapshot, 0),
         SD_BUS_METHOD("RemoveSnapshot", "s", NULL, method_remove_snapshot, 0),
         SD_BUS_METHOD("Reload", NULL, NULL, method_reload, SD_BUS_VTABLE_UNPRIVILEGED),
-        SD_BUS_METHOD("ReloadIfNeeded", "t", NULL, method_reload_if_needed, SD_BUS_VTABLE_UNPRIVILEGED),
+        SD_BUS_METHOD("ReloadTimestamped", "t", NULL, method_reload_timestamped, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("Reexecute", NULL, NULL, method_reexecute, SD_BUS_VTABLE_UNPRIVILEGED),
         SD_BUS_METHOD("Exit", NULL, NULL, method_exit, 0),
         SD_BUS_METHOD("Reboot", NULL, NULL, method_reboot, SD_BUS_VTABLE_CAPABILITY(CAP_SYS_BOOT)),
