@@ -567,6 +567,8 @@ int manager_new(SystemdRunningAs running_as, bool reexecuting, Manager **_m) {
 
         m->taint_usr = dir_is_empty("/usr") > 0;
 
+        m->last_reload_time = 0ULL;
+
         *_m = m;
         return 0;
 
@@ -2319,8 +2321,11 @@ int manager_reload(Manager *m) {
         int r, q;
         FILE *f;
         FDSet *fds;
+        usec_t this_reload_time;
 
         assert(m);
+
+        this_reload_time = now(CLOCK_MONOTONIC);
 
         r = manager_open_serialization(m, &f);
         if (r < 0)
@@ -2388,6 +2393,9 @@ int manager_reload(Manager *m) {
         m->n_reloading--;
 
         m->send_reloading_done = true;
+
+        if (r >= 0)
+                m->last_reload_time = this_reload_time;
 
 finish:
         if (f)

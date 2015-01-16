@@ -73,6 +73,7 @@ static char **arg_states = NULL;
 static char **arg_properties = NULL;
 static bool arg_all = false;
 static bool original_stdout_is_tty;
+static bool legacy_daemon_reload = false;
 static enum dependency {
         DEPENDENCY_FORWARD,
         DEPENDENCY_REVERSE,
@@ -4003,6 +4004,7 @@ static int daemon_reload(DBusConnection *bus, char **args) {
         int r;
         const char *method;
         DBusError error;
+        uint64_t tstamp;
 
         if (arg_action == ACTION_RELOAD)
                 method = "Reload";
@@ -4024,7 +4026,23 @@ static int daemon_reload(DBusConnection *bus, char **args) {
                                     /* "daemon-reload" */ "Reload";
         }
 
-        r = bus_method_call_with_reply(
+        if (streq(method, "Reload") && !legacy_daemon_reload)
+                method = "ReloadTimestamped";
+
+        if (streq(method, "ReloadTimestamped")) {
+                tstamp = now(CLOCK_MONOTONIC);
+                r = bus_method_call_with_reply(
+                        bus,
+                        "org.freedesktop.systemd1",
+                        "/org/freedesktop/systemd1",
+                        "org.freedesktop.systemd1.Manager",
+                        method,
+                        NULL,
+                        &error,
+                        DBUS_TYPE_UINT64, &tstamp,
+                        DBUS_TYPE_INVALID);
+        } else {
+                r = bus_method_call_with_reply(
                         bus,
                         "org.freedesktop.systemd1",
                         "/org/freedesktop/systemd1",
@@ -4033,8 +4051,16 @@ static int daemon_reload(DBusConnection *bus, char **args) {
                         NULL,
                         &error,
                         DBUS_TYPE_INVALID);
+        }
 
-        if (r == -ENOENT && arg_action != ACTION_SYSTEMCTL)
+        if (r == -EIO && streq(method, "ReloadTimestamped") && streq(error.name, DBUS_ERROR_UNKNOWN_METHOD)) {
+                /* The ReloadTimestamped method wasn't available, retry
+                 * with legacy Reload instead. */
+                legacy_daemon_reload = true;
+                dbus_error_free(&error);
+                return daemon_reload(bus, args);
+        }
+        else if (r == -ENOENT && arg_action != ACTION_SYSTEMCTL)
                 /* There's always a fallback possible for
                  * legacy actions. */
                 r = -EADDRNOTAVAIL;

@@ -253,6 +253,9 @@ struct Manager {
          * them. It's a hashmap with a path string as key and a Set as
          * value where Unit objects are contained. */
         Hashmap *units_requiring_mounts_for;
+
+        /* Used to coalesce redundant reloads */
+        usec_t last_reload_time;
 };
 
 int manager_new(SystemdRunningAs running_as, bool reexecuting, Manager **m);

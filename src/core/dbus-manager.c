@@ -132,6 +132,9 @@
         "   <arg name=\"name\" type=\"s\" direction=\"in\"/>\n"         \
         "  </method>\n"                                                 \
         "  <method name=\"Reload\"/>\n"                                 \
+        "  <method name=\"ReloadTimestamped\">\n"                       \
+        "   <arg name=\"timestamp\" type=\"t\" direction=\"in\"/>\n"    \
+        "  </method>\n"                                                 \
         "  <method name=\"Reexecute\"/>\n"                              \
         "  <method name=\"Exit\"/>\n"                                   \
         "  <method name=\"Reboot\"/>\n"                                 \
@@ -1221,6 +1224,43 @@ static DBusHandlerResult bus_manager_message_handler(DBusConnection *connection,
                 if (!dbus_message_append_args(reply, DBUS_TYPE_STRING, &introspection, DBUS_TYPE_INVALID)) {
                         goto oom;
                 }
+        } else if (dbus_message_is_method_call(message, "org.freedesktop.systemd1.Manager", "ReloadTimestamped")) {
+                usec_t requested_time;
+
+                SELINUX_ACCESS_CHECK(connection, message, "reload");
+
+                if (!dbus_message_get_args(
+                                    message,
+                                    &error,
+                                    DBUS_TYPE_UINT64, &requested_time,
+                                    DBUS_TYPE_INVALID))
+                        return bus_send_error_reply(connection, message, &error, -EINVAL);
+
+                /* Is this reload needed?  If a completed reload was started
+                 * after this reload was requested we can coalesce it and
+                 * return immediate success. */
+
+                if (requested_time < m->last_reload_time)
+                {
+                        reply = dbus_message_new_method_return(message);
+                        if (!reply)
+                                goto oom;
+                }
+
+                assert(!m->queued_message);
+
+                /* Instead of sending the reply back right away, we
+                 * just remember that we need to and then send it
+                 * after the reload is finished. That way the caller
+                 * knows when the reload finished. */
+
+                m->queued_message = dbus_message_new_method_return(message);
+                if (!m->queued_message)
+                        goto oom;
+
+                m->queued_message_connection = connection;
+                m->exit_code = MANAGER_RELOAD;
+
         } else if (dbus_message_is_method_call(message, "org.freedesktop.systemd1.Manager", "Reload")) {
 
                 SELINUX_ACCESS_CHECK(connection, message, "reload");
