@@ -1240,27 +1240,27 @@ static DBusHandlerResult bus_manager_message_handler(DBusConnection *connection,
                  * after this reload was requested we can coalesce it and
                  * return immediate success. */
 
-                if (requested_time < m->last_reload_time)
-                {
+                if (requested_time < m->last_reload_time) {
                         reply = dbus_message_new_method_return(message);
                         if (!reply)
                                 goto oom;
+
+                        /* Don't set exit_code to MANAGER_RELOAD */
+                } else {
+                        assert(!m->queued_message);
+
+                        /* Instead of sending the reply back right away, we
+                         * just remember that we need to and then send it
+                         * after the reload is finished. That way the caller
+                         * knows when the reload finished. */
+
+                        m->queued_message = dbus_message_new_method_return(message);
+                        if (!m->queued_message)
+                                goto oom;
+
+                        m->queued_message_connection = connection;
+                        m->exit_code = MANAGER_RELOAD;
                 }
-
-                assert(!m->queued_message);
-
-                /* Instead of sending the reply back right away, we
-                 * just remember that we need to and then send it
-                 * after the reload is finished. That way the caller
-                 * knows when the reload finished. */
-
-                m->queued_message = dbus_message_new_method_return(message);
-                if (!m->queued_message)
-                        goto oom;
-
-                m->queued_message_connection = connection;
-                m->exit_code = MANAGER_RELOAD;
-
         } else if (dbus_message_is_method_call(message, "org.freedesktop.systemd1.Manager", "Reload")) {
 
                 SELINUX_ACCESS_CHECK(connection, message, "reload");
