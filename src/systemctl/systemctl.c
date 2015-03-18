@@ -4774,6 +4774,8 @@ static int daemon_reload(sd_bus *bus, char **args) {
                                     /* "daemon-reload" */ "Reload";
         }
 
+        (void) sd_bus_negotiate_timestamp(bus, true);
+
         r = sd_bus_call_method(
                         bus,
                         "org.freedesktop.systemd1",

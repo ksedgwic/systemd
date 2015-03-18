@@ -294,6 +294,9 @@ struct Manager {
 
         /* When the user hits C-A-D more than 7 times per 2s, reboot immediately... */
         RateLimit ctrl_alt_del_ratelimit;
+
+        /* Used to coalesce redundant reloads */
+        usec_t last_reload_time;
 };
 
 int manager_new(SystemdRunningAs running_as, bool test_run, Manager **m);

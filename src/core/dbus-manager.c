@@ -1161,6 +1161,7 @@ static int method_remove_snapshot(sd_bus *bus, sd_bus_message *message, void *us
 static int method_reload(sd_bus *bus, sd_bus_message *message, void *userdata, sd_bus_error *error) {
         Manager *m = userdata;
         int r;
+        usec_t requested_time;
 
         assert(bus);
         assert(message);
@@ -1175,6 +1176,15 @@ static int method_reload(sd_bus *bus, sd_bus_message *message, void *userdata, s
                 return r;
         if (r == 0)
                 return 1; /* No authorization for now, but the async polkit stuff will call us again when it has it */
+
+
+        /* Is this reload needed?  If a completed reload was started
+         * after this reload was requested we can coalesce it and
+         * return immediate success. */
+
+        r = sd_bus_message_get_monotonic_usec(message, &requested_time);
+        if (r == 0 && requested_time < m->last_reload_time)
+                return sd_bus_reply_method_return(message, NULL);
 
         /* Instead of sending the reply back right away, we just
          * remember that we need to and then send it after the reload
